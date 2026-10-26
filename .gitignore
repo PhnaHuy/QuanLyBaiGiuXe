@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+staff.xlsx
+parking_logs.xlsx
