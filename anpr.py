@@ -1,4 +1,6 @@
 import re
+import shutil
+from pathlib import Path
 
 import cv2
 import pytesseract
@@ -6,6 +8,22 @@ import pytesseract
 
 class ANPRError(Exception):
     pass
+
+
+def configure_tesseract():
+    executable = shutil.which("tesseract")
+    if executable is None:
+        candidates = (
+            Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+            Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+        )
+        executable = next((str(path) for path in candidates if path.is_file()), None)
+
+    if executable:
+        pytesseract.pytesseract.tesseract_cmd = executable
+
+
+configure_tesseract()
 
 
 def normalize_plate(text):

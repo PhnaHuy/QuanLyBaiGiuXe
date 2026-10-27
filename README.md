@@ -11,7 +11,7 @@
    py -m pip install -r requirements.txt
    ```
 
-3. Cài Tesseract OCR cho Windows và bảo đảm chương trình `tesseract.exe` nằm trong `PATH`. Nếu chưa cài hoặc không tìm thấy, ứng dụng sẽ báo rõ khi nhận diện.
+3. Cài Tesseract OCR cho Windows. Ứng dụng tự tìm chương trình trong `PATH` và các thư mục cài đặt Windows phổ biến như `C:\Program Files\Tesseract-OCR`. Nếu cài ở thư mục khác, hãy thêm thư mục chứa `tesseract.exe` vào `PATH` rồi khởi động lại ứng dụng.
 4. Khởi chạy:
 
    ```powershell
