@@ -203,7 +203,15 @@ def _detect_plate_crops(image):
         bottom = min(image_height, int(y2) + padding_y)
         crop = image[top:bottom, left:right]
         if crop.size:
-            crops.append(crop)
+            vehicle_left = max(0, int(x1 - box_width * 2.5))
+            vehicle_top = max(0, int(y1 - box_height * 3))
+            vehicle_right = min(image_width, int(x2 + box_width * 2.5))
+            vehicle_bottom = min(image_height, int(y2 + box_height * 4))
+            vehicle_crop = image[
+                vehicle_top:vehicle_bottom,
+                vehicle_left:vehicle_right,
+            ]
+            crops.append((crop.copy(), vehicle_crop.copy()))
     return crops
 
 
@@ -289,7 +297,7 @@ def _plate_candidates(result):
     return candidates
 
 
-def recognize_plate(image):
+def recognize_plate(image, on_crop_detected=None):
     if image is None or image.size == 0:
         raise ANPRError("Không có ảnh hợp lệ để nhận diện.")
 
@@ -305,8 +313,12 @@ def recognize_plate(image):
                     "độ rõ của biển số và ngưỡng phát hiện của model."
                 )
 
-            engine = _get_ocr_engine()
-            for crop_index, crop in enumerate(crops):
+            engine = None
+            for crop_index, (crop, vehicle_crop) in enumerate(crops):
+                if on_crop_detected is not None:
+                    on_crop_detected(crop, vehicle_crop)
+                if engine is None:
+                    engine = _get_ocr_engine()
                 prepared = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
                 results = engine.predict(
                     prepared,

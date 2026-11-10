@@ -1,6 +1,6 @@
 # Quản lý bãi giữ xe thông minh
 
-Ứng dụng desktop Windows viết bằng Python, giao diện tiếng Việt, dùng PySide6, OpenCV, Pandas và Openpyxl. Dữ liệu được lưu trong hai tệp Excel cạnh chương trình: `staff.xlsx` và `parking_logs.xlsx`.
+Ứng dụng desktop Windows viết bằng Python, giao diện tiếng Việt, dùng PySide6, OpenCV, Pandas và Openpyxl. Dữ liệu được lưu trong hai tệp Excel cạnh chương trình: `staff.xlsx` và `parking_logs.xlsx`; ảnh lượt xe được lưu trong thư mục `captures`.
 
 ## Cài đặt
 
@@ -24,9 +24,12 @@ Hai tệp Excel mẫu sẽ được tạo tự động khi khởi động lần 
 
 ## Sử dụng
 
-- **Điều hành:** nhập chỉ số webcam (ví dụ `0`, `1`) hoặc chọn tệp video, bấm **Mở nguồn**, sau đó bấm nút ghi nhận tương ứng. Nhận diện và ghi Excel chạy ở luồng nền.
-- **Quản lý lịch sử:** xem nhật ký không thể chỉnh sửa trực tiếp, làm mới hoặc xuất báo cáo Excel/CSV.
+- **Điều hành:** nhập chỉ số webcam (ví dụ `0`, `1`) hoặc chọn tệp video, bấm **Mở nguồn**, sau đó bấm nút ghi nhận tương ứng. Nhận diện và ghi Excel chạy ở luồng nền. Mỗi lối chia vùng hiển thị theo tỉ lệ 70/30: video chiếm 70%, cột bên phải hiển thị ảnh biển số và vùng xe ước lượng. Video được cắt giữa để lấp đầy vùng hiển thị; vùng xe được ước lượng bằng cách mở rộng bounding box biển số, không phải kết quả từ model phát hiện xe riêng.
+- **Đối chiếu lượt xe:** các lượt vào lỗi OCR và mọi lượt ra được giữ ở trạng thái chờ xác minh/đối chiếu. Chọn lượt cần xử lý, xem ảnh toàn cảnh, biển số, xe và chọn lượt vào đang mở; nhập/sửa biển số nếu cần rồi xác nhận. Khi đối chiếu lượt ra, biển số đã xác nhận được cập nhật cho cả lượt vào và lượt ra.
+- **Quản lý lịch sử:** xem nhật ký không thể chỉnh sửa trực tiếp, làm mới hoặc xuất báo cáo Excel/CSV. Nhật ký có trạng thái và đường dẫn ảnh bằng chứng.
 - **Quản lý nhân sự:** chọn một dòng để sửa hoặc xóa; dùng biểu mẫu để thêm thông tin nhân viên.
+
+Mỗi lượt ghi nhận lưu ảnh toàn cảnh và các ảnh crop có sẵn tại `captures\YYYY\MM\DD`. Nếu OCR không đọc được, ảnh toàn cảnh vẫn được lưu cùng lượt chờ xác minh. Khi chuyển dự án hoặc sao lưu dữ liệu, hãy giữ cả `parking_logs.xlsx` và thư mục `captures`; thư mục ảnh bị loại khỏi Git vì có thể chứa hình ảnh nhận dạng cá nhân. Các nhật ký cũ được giữ nguyên nhưng không có mã phiên/ảnh để ghép ngược với lượt mới.
 
 ## Model nhận diện biển số
 

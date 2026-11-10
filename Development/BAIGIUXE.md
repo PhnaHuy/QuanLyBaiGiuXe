@@ -181,20 +181,23 @@ Model OCR: PaddleOCR quản lý/tải theo cấu hình thư viện
 | `camera_thread.py` | Đọc khung hình từ OpenCV trong luồng nền, giữ bản sao khung hình mới nhất và phát tín hiệu cập nhật giao diện. | `CameraThread` |
 | `anpr.py` | Nạp model, phát hiện/cắt vùng biển số, nhận dạng OCR, chuẩn hóa và chọn kết quả phù hợp. | `initialize_models()`, `recognize_plate()`, `normalize_plate()` |
 | `excel_db.py` | Tạo/đọc/ghi tệp Excel; kiểm tra dữ liệu nhân viên, phát hiện trùng và tra cứu theo biển số. | `ExcelDatabase` |
+| `image_store.py` | Lưu ảnh sự kiện theo ngày bằng mã lượt; dọn ảnh nếu không thể ghi bản ghi tương ứng. | `CaptureStorage` |
 | `models\license_plate_yolov8n.pt` | Checkpoint YOLO đã huấn luyện phát hiện biển số, được đóng gói cùng dự án. | Model nhị phân |
 | `staff.xlsx` | Lưu hồ sơ nhân viên. Tự tạo khi chưa có. | Mã nhân viên, tên nhân viên, biển số xe |
-| `parking_logs.xlsx` | Lưu lịch sử lượt xe. Tự tạo khi chưa có. | Thời gian, biển số, cổng, loại xe, mã nhân viên |
+| `parking_logs.xlsx` | Lưu lịch sử, trạng thái xác minh, mã lượt/phiên và đường dẫn ảnh. Tự tạo khi chưa có; các nhật ký cũ được bổ sung trường còn thiếu khi đọc. | Thời gian, biển số OCR/đã xác nhận, cổng, loại xe, mã nhân viên, mã lượt, mã phiên, trạng thái, đường dẫn ảnh |
+| `captures\YYYY\MM\DD` | Lưu ảnh toàn cảnh và crop biển số/xe theo mã lượt duy nhất. | Tệp JPEG; thư mục ảnh cần được sao lưu cùng nhật ký |
 
 ### 4.3. Luồng dữ liệu nhận diện
 
 1. Nhân viên mở nguồn hình ảnh ở một trong hai bảng điều hành.
 2. `CameraThread` đọc khung hình và phát hình ảnh để giao diện hiển thị; đồng thời lưu khung hình mới nhất để thao tác chụp.
 3. Khi người dùng chọn **Chụp & Ghi nhận**, `GatePanel` lấy bản sao khung hình và khởi chạy `RecognitionWorker`.
-4. `recognize_plate()` dùng YOLO định vị tối đa ba vùng biển số theo độ tin cậy, cắt vùng ảnh và chuyển vùng cắt sang PaddleOCR.
+4. `recognize_plate()` dùng YOLO định vị tối đa ba vùng biển số theo độ tin cậy, cắt vùng biển số và ước lượng vùng xe bằng cách mở rộng bounding box biển số. Hai ảnh crop được phát về giao diện để xem trước; ảnh biển số được chuyển sang PaddleOCR.
 5. Kết quả OCR được chuẩn hóa và kiểm tra theo định dạng biển số. Nếu cần, các đoạn ký tự gần nhau trên cùng vùng có thể được ghép thành ứng viên.
 6. `RecognitionWorker` tra cứu biển số trong `staff.xlsx`, phân loại nhân viên/khách vãng lai và tạo thời gian ghi nhận.
-7. `ExcelDatabase` thêm bản ghi vào `parking_logs.xlsx`.
-8. Worker phát kết quả hoặc lỗi về giao diện; giao diện cập nhật trạng thái và bật lại nút ghi nhận.
+7. Ảnh toàn cảnh và các crop có sẵn được lưu trong `captures`; đường dẫn tương đối được thêm vào nhật ký.
+8. Lượt vào nhận diện thành công tạo phiên gửi đang mở. Lượt vào lỗi OCR được giữ ở trạng thái chờ xác minh; tất cả lượt ra chờ nhân viên đối chiếu với phiên vào.
+9. Worker phát kết quả hoặc lỗi về giao diện; giao diện cập nhật trạng thái và bật lại nút ghi nhận.
 
 Các thao tác đọc camera, nhận diện và làm nóng model chạy trong QThread để hạn chế chặn giao diện. Truy cập model được bảo vệ bằng khóa; thao tác dữ liệu Excel được đồng bộ trong `ExcelDatabase`.
 
@@ -205,6 +208,7 @@ Các thao tác đọc camera, nhận diện và làm nóng model chạy trong QT
 - Cửa sổ chính được mở sau khi khởi tạo dữ liệu.
 - Model nhận diện được nạp/làm nóng trong worker riêng. Model YOLO mặc định ở thư mục dự án; biến `PARKING_PLATE_MODEL` có thể ghi đè đường dẫn.
 - Tệp Excel đang mở hoặc bị khóa có thể khiến thao tác đọc/ghi thất bại; ứng dụng đưa ra thông báo yêu cầu đóng tệp.
+- Ảnh chỉ được giữ khi bản ghi nhật ký được ghi thành công; nếu lưu nhật ký thất bại, ảnh vừa tạo được dọn để tránh tệp bằng chứng mồ côi.
 
 ## 5. Chức năng hệ thống
 
@@ -212,8 +216,11 @@ Các thao tác đọc camera, nhận diện và làm nóng model chạy trong QT
 
 - Mỗi lối có một bảng riêng, nguồn mặc định là webcam chỉ số `0` cho lối vào và `1` cho lối ra.
 - Người dùng có thể nhập chỉ số webcam hoặc chọn tệp video.
-- Hình ảnh được hiển thị liên tục khi nguồn hoạt động.
+- Vùng hiển thị được chia theo chiều ngang: video chiếm 70%, cột preview chiếm 30%; cột preview chia đều theo chiều dọc cho ảnh biển số và ảnh xe ước lượng.
+- Video được phóng vừa vùng 70% và cắt phần thừa quanh tâm để lấp đầy vùng hiển thị, không kéo méo tỉ lệ.
 - Người dùng chủ động chụp khung hình để nhận diện; hệ thống không tự động nhận diện mọi khung hình.
+- Sau khi YOLO phát hiện vùng biển số trong lần ghi nhận, hai ảnh crop hiển thị ở cột preview; nội dung được xóa khi bắt đầu lượt ghi nhận tiếp theo.
+- Ảnh xe chỉ là vùng ước lượng quanh biển số dựa trên bounding box biển số, không phải vùng xe được một model riêng phát hiện và có thể không chứa toàn bộ xe.
 - Mỗi lượt nhận diện được xử lý nền, không cho chạy hai lần ghi nhận đồng thời trên cùng bảng khi worker trước còn hoạt động.
 - Kết quả nêu biển số, lối, loại đối tượng, mã/tên nhân viên nếu có và thời gian nhận diện.
 
@@ -222,7 +229,7 @@ Các thao tác đọc camera, nhận diện và làm nóng model chạy trong QT
 - YOLO phát hiện vùng biển số; checkpoint mặc định là `models\license_plate_yolov8n.pt`.
 - PaddleOCR đọc ký tự trên ảnh biển số đã cắt.
 - Chuỗi nhận diện được chuyển chữ hoa và loại bỏ ký tự không phải chữ/số để chuẩn hóa, dùng cho kiểm tra định dạng và tra cứu hồ sơ.
-- Nếu không phát hiện biển số, OCR không đọc được hoặc model không khởi tạo được, hệ thống trả lỗi thay vì ghi lượt xe không có biển số hợp lệ.
+- Nếu không phát hiện biển số, OCR không đọc được hoặc model không khởi tạo được, hệ thống vẫn lưu ảnh toàn cảnh và tạo lượt chờ xác minh/đối chiếu; không tạo phiên vào dựa trên biển số trống.
 - PaddleOCR có thể cần Internet ở lần đầu để tải model theo cấu hình thư viện.
 
 ### 5.3. Quản lý lịch sử
@@ -232,7 +239,16 @@ Các thao tác đọc camera, nhận diện và làm nóng model chạy trong QT
 - Lịch sử chỉ đọc trên giao diện; hiện chưa có chức năng sửa/xóa, lọc hoặc tìm kiếm.
 - Xuất toàn bộ dữ liệu lịch sử ra `.xlsx` hoặc `.csv`.
 
-### 5.4. Quản lý nhân sự
+### 5.4. Đối chiếu ảnh và ghép phiên
+
+- Mỗi lượt mới lưu ảnh toàn cảnh; ảnh biển số và vùng xe ước lượng được lưu nếu YOLO phát hiện vùng biển số.
+- Khi OCR không đọc được ở lối vào, lượt được lưu là `Chờ xác minh`; nhân viên nhập biển số để mở phiên gửi xe.
+- Lượt ra luôn được lưu là `Chờ đối chiếu`. Nhân viên so sánh ảnh lượt ra với danh sách lượt vào còn mở, xác nhận hoặc sửa biển số và ghép hai lượt vào cùng mã phiên.
+- Nếu biển số được sửa lúc đối chiếu lượt ra, cả lượt vào lẫn lượt ra được cập nhật theo biển số xác nhận; cột `Biển số OCR` giữ kết quả ban đầu để truy vết.
+- Ảnh xe là crop ước lượng bằng cách mở rộng vùng quanh biển số, không bảo đảm chứa toàn bộ xe.
+- Nhật ký trước khi có mã phiên/ảnh được giữ nguyên, không tự động ghép với các lượt mới.
+
+### 5.5. Quản lý nhân sự
 
 - Hiển thị danh sách trong `staff.xlsx`.
 - Thêm hồ sơ với đủ mã nhân viên, tên và biển số.
@@ -241,7 +257,7 @@ Các thao tác đọc camera, nhận diện và làm nóng model chạy trong QT
 - Tra cứu hồ sơ nhân viên bằng biển số đã chuẩn hóa.
 - Khi xóa nhân viên, lịch sử lượt xe cũ được giữ nguyên; các lượt sau đó với biển số không còn trong danh sách sẽ được phân loại là khách vãng lai.
 
-### 5.5. Khởi tạo và xử lý lỗi
+### 5.6. Khởi tạo và xử lý lỗi
 
 - Khởi động thất bại nếu không thể chuẩn bị dữ liệu Excel; người dùng nhận hộp thoại nêu nguyên nhân.
 - Lỗi nguồn hình ảnh, lỗi model, ảnh không hợp lệ, không phát hiện/đọc được biển số và lỗi đọc/ghi Excel được báo trên giao diện.
@@ -262,19 +278,25 @@ Các thao tác đọc camera, nhận diện và làm nóng model chạy trong QT
 | Trường | Ý nghĩa |
 |---|---|
 | `Thời gian` | Thời điểm ghi nhận theo thời gian hệ thống, định dạng `YYYY-MM-DD HH:MM:SS`. |
-| `Biển số` | Biển số hệ thống nhận diện được. |
+| `Biển số` | Biển số OCR hoặc giá trị đã được nhân viên xác nhận/sửa. |
 | `Cổng` | Tên lối đang thao tác (`Vào` hoặc `Ra`). |
-| `Loại xe` | `Nhân viên` nếu biển số khớp hồ sơ; nếu không thì `Khách vãng lai`. |
+| `Loại xe` | `Nhân viên` nếu biển số khớp hồ sơ; nếu không thì `Khách vãng lai`; có thể để trống khi chưa xác minh. |
 | `Mã nhân viên` | Mã hồ sơ khớp; để trống với khách vãng lai. |
+| `Mã lượt` | Mã duy nhất của sự kiện vào/ra. |
+| `Mã phiên` | Mã nối lượt vào và lượt ra; trống khi chưa được ghép. |
+| `Trạng thái` | `Đang gửi`, `Chờ xác minh`, `Chờ đối chiếu`, `Đã ra` hoặc `Đã đối chiếu`. |
+| `Biển số OCR` | Kết quả OCR nguyên thủy để so sánh với giá trị được xác nhận. |
+| `Ảnh toàn cảnh`, `Ảnh biển số`, `Ảnh xe` | Đường dẫn tương đối trong `captures`; ảnh xe là crop ước lượng. |
+| `Lỗi nhận diện` | Lý do OCR/model không trả về biển số nếu có. |
 
-Nhật ký hiện không lưu ảnh chụp, tên nhân viên, mã lượt xe riêng, trạng thái thanh toán hay quan hệ tham chiếu tường minh giữa hai lượt vào/ra.
+Nhật ký không lưu tên nhân viên, trạng thái thanh toán hoặc dữ liệu thanh toán. Nhật ký cũ được bảo toàn nhưng các trường bổ sung để trống; hệ thống không tự ghép các lượt cũ.
 
 ## 7. Quy tắc nghiệp vụ và giới hạn
 
 1. Một lượt chỉ được ghi khi đã có nguồn chạy và khung hình hợp lệ.
 2. Việc ghi nhận do nhân viên vận hành kích hoạt bằng nút bấm, không diễn ra tự động theo chuyển động hoặc phát hiện phương tiện.
 3. Phân loại nhân viên dựa trên đối sánh biển số với danh sách nhân viên; không có quy trình xác minh danh tính khác.
-4. Nhật ký ghi nhận từng lần tại một lối độc lập. Hệ thống hiện không bắt buộc xe phải có lượt vào trước lượt ra và không tính thời lượng gửi xe.
+4. Lượt vào nhận diện thành công tạo phiên đang gửi; lượt vào chưa xác minh chưa thể ghép với lượt ra. Nhân viên phải chọn phiên vào để ghép lượt ra; hệ thống không tự tính thời lượng gửi xe.
 5. Hai bảng điều hành cho phép chọn nguồn riêng, nhưng hệ thống không xác thực đó là vị trí vào/ra vật lý tương ứng.
 6. Excel là kho dữ liệu cục bộ; không hỗ trợ nhiều máy cùng ghi dữ liệu an toàn qua mạng.
 7. Báo cáo xuất toàn bộ nhật ký, chưa có lọc theo ngày, cổng, biển số hoặc loại xe.
