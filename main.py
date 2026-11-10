@@ -3,6 +3,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from auth import ADMIN_DEFAULT_PASSWORD
 from excel_db import ExcelDatabase, ExcelDatabaseError
 from ui import LoginDialog, MainWindow, configure_light_theme
 
@@ -18,7 +19,10 @@ def main():
         return 0
 
     data_directory = Path(__file__).resolve().parent
-    database = ExcelDatabase(data_directory)
+    database = ExcelDatabase(
+        data_directory,
+        staff_password=ADMIN_DEFAULT_PASSWORD,
+    )
     try:
         database.initialize()
     except (ExcelDatabaseError, OSError) as error:

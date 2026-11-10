@@ -21,9 +21,10 @@ description: 'Use when changing, debugging, or testing staff records, parking lo
 4. Validate staff records before writing. Retain the required-field checks, unique employee IDs, and plate uniqueness based on `normalize_plate()`.
 5. Preserve old parking logs when staff records are updated or deleted. Do not silently truncate, reorder, or rewrite unrelated data.
 6. Keep reads and writes synchronized using the existing database lock. Convert file, permission, and schema errors into explicit `ExcelDatabaseError` messages that the UI can present.
-7. Test with temporary files or a temporary directory. Verify valid CRUD/lookup behavior, duplicate and missing-field rejection, required columns, and locked/unreadable file handling as applicable.
-8. For export changes, verify both `.xlsx` and `.csv` behavior and preserve the user's selected destination and format.
-9. Update user documentation if the schema, storage location, backup expectations, or export behavior changes.
+7. `staff.xlsx` is encrypted with `ADMIN_DEFAULT_PASSWORD` from `auth.py`. Keep decryption/encryption inside `ExcelDatabase`, use in-memory buffers for plaintext, validate legacy workbook columns before migration, and replace the encrypted file atomically.
+8. Test encryption and migration only with temporary workbooks/directories. Verify valid CRUD/lookup behavior, correct and incorrect passwords, preservation of legacy records, duplicate and missing-field rejection, required columns, and locked/unreadable file handling as applicable.
+9. For export changes, verify both `.xlsx` and `.csv` behavior and preserve the user's selected destination and format.
+10. Update user documentation if the schema, storage location, backup expectations, or export behavior changes.
 
 ## Invariants
 
@@ -32,4 +33,5 @@ description: 'Use when changing, debugging, or testing staff records, parking lo
 - Older parking logs may lack the newer event, session, status, and image columns; read them with compatible empty values and preserve all existing rows.
 - Image files live under `captures/` and are referenced by relative paths in the parking log. Do not write image bytes into Excel or let tests modify the project's real captures.
 - Errors must not be swallowed, and a failed write must never be reported as a successful operation.
+- Never leave a plaintext temporary copy of the protected staff workbook on disk.
 - Tests must not overwrite the project's real `staff.xlsx` or `parking_logs.xlsx`.

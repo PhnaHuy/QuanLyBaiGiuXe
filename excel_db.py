@@ -1,12 +1,27 @@
+from io import BytesIO
+import os
 from pathlib import Path
+import tempfile
 from threading import RLock
 
+import msoffcrypto
 import pandas as pd
+from msoffcrypto.exceptions import (
+    DecryptionError,
+    EncryptionError,
+    FileFormatError,
+    InvalidKeyError,
+    ParseError,
+)
 
+from auth import ADMIN_DEFAULT_PASSWORD
 from anpr import normalize_plate
 
 
 STAFF_COLUMNS = ["Mã nhân viên", "Tên nhân viên", "Biển số xe"]
+STATUS_AUTO_MATCHED = "Đã đối chiếu tự động"
+STATUS_PENDING_RECONCILIATION = "Chờ đối chiếu"
+STATUS_ENTRY_PENDING_VERIFICATION = "Đang gửi - chờ xác minh"
 LOG_COLUMNS = [
     "Thời gian",
     "Biển số",
@@ -29,10 +44,11 @@ class ExcelDatabaseError(Exception):
 
 
 class ExcelDatabase:
-    def __init__(self, directory):
+    def __init__(self, directory, staff_password=ADMIN_DEFAULT_PASSWORD):
         self.directory = Path(directory)
         self.staff_path = self.directory / "staff.xlsx"
         self.logs_path = self.directory / "parking_logs.xlsx"
+        self.staff_password = staff_password
         self._lock = RLock()
 
     @staticmethod
@@ -45,8 +61,59 @@ class ExcelDatabase:
     def initialize(self):
         self.directory.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            self._initialize_file(self.staff_path, STAFF_COLUMNS)
+            self._initialize_staff_file()
             self._initialize_file(self.logs_path, LOG_COLUMNS)
+            self._migrate_pending_entry_sessions()
+
+    def _migrate_pending_entry_sessions(self):
+        frame = self.read_logs()
+        pending_entries = (
+            (frame["Cổng"] == "Vào")
+            & (frame["Trạng thái"] == "Chờ xác minh")
+            & (frame["Mã phiên"].str.strip() == "")
+            & (frame["Mã lượt"].str.strip() != "")
+        )
+        if not pending_entries.any():
+            return
+
+        frame.loc[pending_entries, "Mã phiên"] = frame.loc[
+            pending_entries, "Mã lượt"
+        ]
+        frame.loc[pending_entries, "Trạng thái"] = (
+            STATUS_ENTRY_PENDING_VERIFICATION
+        )
+        self._write_frame(frame.loc[:, LOG_COLUMNS], self.logs_path)
+
+    def _initialize_staff_file(self):
+        if self.staff_path.exists():
+            try:
+                payload = self.staff_path.read_bytes()
+            except PermissionError as error:
+                raise ExcelDatabaseError(
+                    f"Không thể đọc tệp “{self.staff_path.name}”. "
+                    "Vui lòng đóng tệp trong Microsoft Excel rồi thử lại."
+                ) from error
+            except OSError as error:
+                raise ExcelDatabaseError(
+                    f"Không thể đọc tệp “{self.staff_path.name}”: {error}"
+                ) from error
+            decrypted, is_encrypted = self._decrypt_staff_workbook(payload)
+            self._read_frame_from_source(
+                BytesIO(decrypted),
+                self.staff_path,
+                STAFF_COLUMNS,
+            )
+            if not is_encrypted:
+                self._write_encrypted_staff_bytes(payload)
+            return
+
+        buffer = BytesIO()
+        pd.DataFrame(columns=STAFF_COLUMNS).to_excel(
+            buffer,
+            index=False,
+            engine="openpyxl",
+        )
+        self._write_encrypted_staff_bytes(buffer.getvalue())
 
     def _initialize_file(self, path, columns):
         if path.exists():
@@ -56,9 +123,13 @@ class ExcelDatabase:
         except PermissionError as error:
             raise ExcelDatabaseError(self._permission_message(path)) from error
 
-    def _read_frame(self, path, columns):
+    def _read_frame_from_source(self, source, path, columns):
         try:
-            frame = pd.read_excel(path, engine="openpyxl", dtype=str).fillna("")
+            frame = pd.read_excel(
+                source,
+                engine="openpyxl",
+                dtype=str,
+            ).fillna("")
         except PermissionError as error:
             raise ExcelDatabaseError(
                 f"Không thể đọc tệp “{path.name}”. Vui lòng đóng tệp trong Microsoft Excel rồi thử lại."
@@ -72,6 +143,81 @@ class ExcelDatabase:
                 f"Tệp “{path.name}” thiếu cột bắt buộc: {', '.join(missing)}."
             )
         return frame.fillna("")
+
+    def _read_frame(self, path, columns):
+        if path == self.staff_path:
+            try:
+                payload = path.read_bytes()
+            except PermissionError as error:
+                raise ExcelDatabaseError(
+                    f"Không thể đọc tệp “{path.name}”. "
+                    "Vui lòng đóng tệp trong Microsoft Excel rồi thử lại."
+                ) from error
+            except OSError as error:
+                raise ExcelDatabaseError(
+                    f"Không thể đọc tệp “{path.name}”: {error}"
+                ) from error
+            decrypted, _is_encrypted = self._decrypt_staff_workbook(payload)
+            source = BytesIO(decrypted)
+        else:
+            source = path
+        return self._read_frame_from_source(source, path, columns)
+
+    def _decrypt_staff_workbook(self, payload):
+        try:
+            office_file = msoffcrypto.OfficeFile(BytesIO(payload))
+            if not office_file.is_encrypted():
+                return payload, False
+            office_file.load_key(
+                password=self.staff_password,
+                verify_password=True,
+            )
+            decrypted = BytesIO()
+            office_file.decrypt(decrypted, verify_integrity=True)
+        except InvalidKeyError as error:
+            raise ExcelDatabaseError(
+                "Không thể mở staff.xlsx: mật khẩu không khớp hoặc tệp đã bị thay đổi."
+            ) from error
+        except (DecryptionError, FileFormatError, ParseError) as error:
+            raise ExcelDatabaseError(
+                f"Không thể giải mã staff.xlsx: {error}"
+            ) from error
+        return decrypted.getvalue(), True
+
+    def _write_encrypted_staff_bytes(self, payload):
+        try:
+            office_file = msoffcrypto.OfficeFile(BytesIO(payload))
+            encrypted = BytesIO()
+            office_file.encrypt(self.staff_password, encrypted)
+            self._atomic_write(self.staff_path, encrypted.getvalue())
+        except PermissionError as error:
+            raise ExcelDatabaseError(
+                self._permission_message(self.staff_path)
+            ) from error
+        except (EncryptionError, FileFormatError, ParseError, OSError) as error:
+            raise ExcelDatabaseError(
+                f"Không thể mã hóa tệp “{self.staff_path.name}”: {error}"
+            ) from error
+
+    @staticmethod
+    def _atomic_write(path, payload):
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                temporary_file.write(payload)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+            os.replace(temporary_path, path)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
 
     def read_staff(self):
         with self._lock:
@@ -89,7 +235,12 @@ class ExcelDatabase:
 
     def _write_frame(self, frame, path):
         try:
-            frame.to_excel(path, index=False, engine="openpyxl")
+            if path == self.staff_path:
+                buffer = BytesIO()
+                frame.to_excel(buffer, index=False, engine="openpyxl")
+                self._write_encrypted_staff_bytes(buffer.getvalue())
+            else:
+                frame.to_excel(path, index=False, engine="openpyxl")
         except PermissionError as error:
             raise ExcelDatabaseError(self._permission_message(path)) from error
         except (OSError, ValueError, ImportError) as error:
@@ -152,33 +303,79 @@ class ExcelDatabase:
         log = {column: str(values.get(column, "")).strip() for column in LOG_COLUMNS}
         with self._lock:
             frame = self.read_logs()
-            self._write_frame(pd.concat([frame, pd.DataFrame([log])], ignore_index=True), self.logs_path)
+            if log["Cổng"] == "Vào":
+                log["Mã phiên"] = log["Mã lượt"]
+                if log["Trạng thái"] == "Chờ xác minh":
+                    log["Trạng thái"] = STATUS_ENTRY_PENDING_VERIFICATION
+                elif not log["Trạng thái"]:
+                    log["Trạng thái"] = "Đang gửi"
+            elif log["Cổng"] == "Ra":
+                log = self._match_exit_to_open_session(frame, log)
+            frame = pd.concat([frame, pd.DataFrame([log])], ignore_index=True)
+            self._write_frame(frame.loc[:, LOG_COLUMNS], self.logs_path)
+            return log
+
+    def _match_exit_to_open_session(self, logs, exit_log):
+        plate = normalize_plate(
+            exit_log.get("Biển số OCR") or exit_log.get("Biển số", "")
+        )
+        if not plate:
+            return exit_log
+
+        open_sessions = self._open_sessions_from_logs(logs)
+        matches = open_sessions[
+            open_sessions["Biển số"].map(normalize_plate) == plate
+        ]
+        if len(matches) != 1:
+            return exit_log
+
+        entry = matches.iloc[0]
+        entry_rows = logs.index[logs["Mã lượt"] == entry["Mã lượt"]]
+        if len(entry_rows) != 1 or not entry["Mã phiên"]:
+            return exit_log
+
+        exit_log["Biển số"] = entry["Biển số"]
+        exit_log["Mã nhân viên"] = entry["Mã nhân viên"]
+        exit_log["Loại xe"] = entry["Loại xe"]
+        exit_log["Mã phiên"] = entry["Mã phiên"]
+        exit_log["Trạng thái"] = STATUS_AUTO_MATCHED
+        logs.loc[entry_rows[0], "Trạng thái"] = "Đã ra"
+        return exit_log
+
+    @staticmethod
+    def _open_sessions_from_logs(logs):
+        entries = logs[
+            (logs["Cổng"] == "Vào")
+            & (logs["Mã phiên"].str.strip() != "")
+        ].copy()
+        exited_sessions = set(
+            logs.loc[logs["Cổng"] == "Ra", "Mã phiên"].str.strip()
+        )
+        open_sessions = entries[
+            ~entries["Mã phiên"].isin(exited_sessions)
+        ]
+        return open_sessions.sort_values(
+            "Thời gian",
+            ascending=False,
+            kind="stable",
+        ).reset_index(drop=True)
 
     def get_pending_logs(self):
         with self._lock:
             frame = self.read_logs()
             return frame[
-                frame["Trạng thái"].isin(["Chờ xác minh", "Chờ đối chiếu"])
+                frame["Trạng thái"].isin(
+                    [
+                        "Chờ xác minh",
+                        STATUS_ENTRY_PENDING_VERIFICATION,
+                        STATUS_PENDING_RECONCILIATION,
+                    ]
+                )
             ].copy()
 
     def get_open_sessions(self):
         with self._lock:
-            logs = self.read_logs()
-            entries = logs[
-                (logs["Cổng"] == "Vào")
-                & (logs["Mã phiên"].str.strip() != "")
-            ].copy()
-            exited_sessions = set(
-                logs.loc[logs["Cổng"] == "Ra", "Mã phiên"].str.strip()
-            )
-            open_sessions = entries[
-                ~entries["Mã phiên"].isin(exited_sessions)
-            ]
-            return open_sessions.sort_values(
-                "Thời gian",
-                ascending=False,
-                kind="stable",
-            ).reset_index(drop=True)
+            return self._open_sessions_from_logs(self.read_logs())
 
     def resolve_pending_log(self, event_id, plate, session_id=""):
         normalized_plate = normalize_plate(plate)
@@ -192,7 +389,11 @@ class ExcelDatabase:
                 raise ValueError("Không tìm thấy duy nhất lượt cần đối chiếu. Hãy làm mới danh sách.")
             index = matches[0]
             row = frame.loc[index]
-            if row["Trạng thái"] not in ("Chờ xác minh", "Chờ đối chiếu"):
+            if row["Trạng thái"] not in (
+                "Chờ xác minh",
+                STATUS_ENTRY_PENDING_VERIFICATION,
+                STATUS_PENDING_RECONCILIATION,
+            ):
                 raise ValueError("Lượt này đã được đối chiếu hoặc không còn chờ xử lý.")
 
             if row["Cổng"] == "Vào":

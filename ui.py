@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import cv2
 import pandas as pd
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor, QImage, QPalette, QPixmap
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -31,9 +31,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from auth import ADMIN_DEFAULT_PASSWORD
 from anpr import ANPRError, initialize_models, normalize_plate, recognize_plate
 from camera_thread import CameraThread, crop_frame_to_aspect
-from excel_db import ExcelDatabase, ExcelDatabaseError
+from excel_db import (
+    STATUS_AUTO_MATCHED,
+    STATUS_ENTRY_PENDING_VERIFICATION,
+    STATUS_PENDING_RECONCILIATION,
+    ExcelDatabase,
+    ExcelDatabaseError,
+)
 from image_store import CaptureStorage, CaptureStorageError
 
 
@@ -278,8 +285,6 @@ def configure_light_theme(application):
 
 ADMIN_ROLE = "Admin"
 EMPLOYEE_ROLE = "Nhân viên"
-ADMIN_DEFAULT_PASSWORD = "123"
-
 
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
@@ -376,6 +381,8 @@ class RecognitionWorker(QThread):
     crop_detected = Signal(object, object)
     failed = Signal(str)
     plate_recognized = Signal(str)
+    employee_recognized = Signal(str, str, str)
+    progress = Signal(str)
 
     def __init__(self, image, original_image, gate, database, parent=None):
         super().__init__(parent)
@@ -398,18 +405,37 @@ class RecognitionWorker(QThread):
             self.crop_detected.emit(plate_crop, vehicle_crop)
 
         try:
-            plate = recognize_plate(self.image, capture_crops)
+            plate = recognize_plate(
+                self.image,
+                capture_crops,
+                self.progress.emit,
+            )
             self.plate_recognized.emit(plate)
         except ANPRError as error:
             recognition_error = str(error)
+            self.plate_recognized.emit("")
         except Exception as error:
             recognition_error = f"Đã xảy ra lỗi khi nhận diện: {error}"
+            self.plate_recognized.emit("")
 
         try:
+            if plate:
+                self.progress.emit("Đang tra cứu hồ sơ nhân viên...")
+                staff = self.database.find_staff_by_plate(plate)
+                self.employee_recognized.emit(
+                    staff["Mã nhân viên"] if staff else "",
+                    staff["Tên nhân viên"] if staff else "",
+                    "Nhân viên" if staff else "Khách vãng lai",
+                )
+            else:
+                staff = None
+                self.employee_recognized.emit("", "", "Chờ xác minh")
+
             recognition_seconds = perf_counter() - recognition_started
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             event_id = uuid4().hex
             storage = CaptureStorage(self.database.directory)
+            self.progress.emit("Đang lưu ảnh bằng chứng...")
             image_paths = storage.save_capture(
                 event_id,
                 self.original_image,
@@ -417,9 +443,8 @@ class RecognitionWorker(QThread):
                 vehicle_crop,
             )
             try:
-                staff = self.database.find_staff_by_plate(plate) if plate else None
                 is_entry = self.gate == "Vào"
-                is_recognized_entry = is_entry and bool(plate)
+                self.progress.emit("Đang ghi lượt xe vào nhật ký...")
                 result = {
                     "Thời gian": timestamp,
                     "Biển số": plate,
@@ -433,13 +458,13 @@ class RecognitionWorker(QThread):
                     ),
                     "Mã nhân viên": staff["Mã nhân viên"] if staff else "",
                     "Mã lượt": event_id,
-                    "Mã phiên": event_id if is_recognized_entry else "",
+                    "Mã phiên": event_id if is_entry else "",
                     "Trạng thái": (
                         "Đang gửi"
-                        if is_recognized_entry
-                        else "Chờ xác minh"
+                        if is_entry and plate
+                        else STATUS_ENTRY_PENDING_VERIFICATION
                         if is_entry
-                        else "Chờ đối chiếu"
+                        else STATUS_PENDING_RECONCILIATION
                     ),
                     "Biển số OCR": plate,
                     **image_paths,
@@ -447,7 +472,7 @@ class RecognitionWorker(QThread):
                     "Thời gian nhận diện": recognition_seconds,
                     "Lỗi nhận diện": recognition_error,
                 }
-                self.database.add_log(result)
+                result = self.database.add_log(result)
             except Exception:
                 storage.remove_capture(image_paths)
                 raise
@@ -474,6 +499,32 @@ class ModelWarmupWorker(QThread):
             self.ready.emit()
 
 
+class PlateImageLabel(QLabel):
+    def __init__(self, text=""):
+        super().__init__(text)
+        self._status_icon = QPixmap()
+
+    def set_status_icon(self, icon):
+        self._status_icon = icon or QPixmap()
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._status_icon.isNull():
+            return
+        icon = self._status_icon.scaled(
+            QSize(32, 32),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        painter = QPainter(self)
+        painter.drawPixmap(
+            8,
+            max(0, self.height() - icon.height() - 8),
+            icon,
+        )
+
+
 class GatePanel(QGroupBox):
     record_saved = Signal()
     resources_changed = Signal()
@@ -484,6 +535,11 @@ class GatePanel(QGroupBox):
         self.database = database
         self.camera = None
         self.worker = None
+        self.recognition_stage = ""
+        self.recognition_stage_started = 0.0
+        self.recognition_timer = QTimer(self)
+        self.recognition_timer.setInterval(1000)
+        self.recognition_timer.timeout.connect(self.update_recognition_progress)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 18, 14, 14)
@@ -533,7 +589,12 @@ class GatePanel(QGroupBox):
         self.plate_crop_panel, self.plate_crop_label = self.create_crop_preview(
             "Biển số",
             "Chưa phát hiện biển số",
+            plate_image=True,
         )
+        self.plate_status_icons = {
+            STATUS_AUTO_MATCHED: self.load_status_icon("tick.png"),
+            STATUS_PENDING_RECONCILIATION: self.load_status_icon("cancel.png"),
+        }
         self.vehicle_crop_panel, self.vehicle_crop_label = self.create_crop_preview(
             "Xe",
             "Chưa có ảnh xe",
@@ -555,6 +616,16 @@ class GatePanel(QGroupBox):
             "border-radius: 8px; padding: 6px;"
         )
         layout.addWidget(self.plate_result_label)
+
+        self.employee_result_label = QLabel("Mã nhân viên: Chưa xác định")
+        self.employee_result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.employee_result_label.setMinimumHeight(34)
+        self.employee_result_label.setStyleSheet(
+            "font-size: 15px; font-weight: 600; color: #344563; "
+            "background-color: #f7f9fc; border: 1px solid #e1e7f0; "
+            "border-radius: 7px; padding: 4px 8px;"
+        )
+        layout.addWidget(self.employee_result_label)
 
         self.result_label = QLabel("Chưa ghi nhận lượt xe")
         self.result_label.setWordWrap(True)
@@ -672,8 +743,10 @@ class GatePanel(QGroupBox):
 
         self.clear_crop_previews()
         self.plate_result_label.setText("Đang nhận diện...")
+        self.employee_result_label.setText("Mã nhân viên: Đang chờ OCR")
         self.capture_button.setEnabled(False)
-        self.result_label.setText("Đang nhận diện biển số và ghi dữ liệu...")
+        self.show_recognition_progress("Đang khởi động nhận diện...")
+        self.recognition_timer.start()
         self.worker = RecognitionWorker(
             image,
             frame,
@@ -683,6 +756,8 @@ class GatePanel(QGroupBox):
         )
         self.worker.crop_detected.connect(self.show_crop_previews)
         self.worker.plate_recognized.connect(self.show_plate_result)
+        self.worker.employee_recognized.connect(self.show_employee_result)
+        self.worker.progress.connect(self.show_recognition_progress)
         self.worker.completed.connect(self.show_result)
         self.worker.failed.connect(self.show_record_error)
         self.worker.finished.connect(self.worker_finished)
@@ -690,7 +765,23 @@ class GatePanel(QGroupBox):
         self.worker.start()
 
     @staticmethod
-    def create_crop_preview(title, placeholder):
+    def load_status_icon(file_name):
+        icon_path = (
+            Path(__file__).resolve().parent
+            / "Development"
+            / file_name
+        )
+        if not icon_path.is_file():
+            raise FileNotFoundError(f"Không tìm thấy biểu tượng trạng thái: {icon_path}")
+        reader = QImageReader(str(icon_path))
+        reader.setScaledSize(QSize(48, 48))
+        image = reader.read()
+        if image.isNull():
+            raise ValueError(f"Không thể đọc biểu tượng trạng thái: {icon_path}")
+        return QPixmap.fromImage(image)
+
+    @staticmethod
+    def create_crop_preview(title, placeholder, plate_image=False):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -698,7 +789,11 @@ class GatePanel(QGroupBox):
 
         title_label = QLabel(title)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview_label = QLabel(placeholder)
+        preview_label = (
+            PlateImageLabel(placeholder)
+            if plate_image
+            else QLabel(placeholder)
+        )
         preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_label.setMinimumWidth(0)
         preview_label.setWordWrap(True)
@@ -745,12 +840,22 @@ class GatePanel(QGroupBox):
     def clear_crop_previews(self):
         self.plate_crop_label.clear()
         self.plate_crop_label.setText("Chưa phát hiện biển số")
+        self.plate_crop_label.set_status_icon(None)
         self.vehicle_crop_label.clear()
         self.vehicle_crop_label.setText("Chưa có ảnh xe")
 
     def show_result(self, result):
         plate = result["Biển số"]
         self.show_plate_result(plate)
+        self.show_employee_result(
+            result["Mã nhân viên"],
+            result.get("Tên nhân viên", ""),
+            result["Loại xe"],
+        )
+        if self.gate == "Ra":
+            self.plate_crop_label.set_status_icon(
+                self.plate_status_icons.get(result["Trạng thái"])
+            )
         employee = result["Mã nhân viên"]
         if employee:
             detail = f'Nhân viên {employee} - {result["Tên nhân viên"]}'
@@ -760,6 +865,18 @@ class GatePanel(QGroupBox):
             message = (
                 f'Đã ghi nhận xe {result["Biển số"]} tại lối {self.gate}. '
                 f'{detail}. Ảnh đã được lưu để đối chiếu khi xe ra.'
+            )
+        elif result["Trạng thái"] == STATUS_ENTRY_PENDING_VERIFICATION:
+            message = (
+                "Đã ghi nhận xe vào bãi và mở phiên gửi xe; biển số đang chờ "
+                "nhân viên xác minh trong tab “Đối chiếu lượt xe”."
+            )
+            if result["Lỗi nhận diện"]:
+                message += f' Lỗi nhận diện: {result["Lỗi nhận diện"]}'
+        elif result["Trạng thái"] == STATUS_AUTO_MATCHED:
+            message = (
+                f'Đã tự động đối chiếu xe {result["Biển số"]} tại lối ra '
+                "với lượt vào đang mở. Ảnh đã được lưu trong nhật ký."
             )
         else:
             message = (
@@ -771,16 +888,53 @@ class GatePanel(QGroupBox):
         self.result_label.setText(message)
         self.record_saved.emit()
 
+    def show_recognition_progress(self, stage):
+        self.recognition_stage = stage
+        self.recognition_stage_started = perf_counter()
+        self.update_recognition_progress()
+
+    def update_recognition_progress(self):
+        if not self.recognition_stage:
+            return
+        elapsed = int(perf_counter() - self.recognition_stage_started)
+        message = f"{self.recognition_stage} ({elapsed} giây)"
+        if "OCR" in self.recognition_stage and elapsed >= 15:
+            message += ". OCR phản hồi chậm; tác vụ vẫn đang chạy."
+        self.result_label.setText(message)
+
     def show_record_error(self, message):
         if self.plate_result_label.text() == "Đang nhận diện...":
             self.show_plate_result("")
+        if self.employee_result_label.text() == "Mã nhân viên: Đang tra cứu...":
+            self.employee_result_label.setText(
+                "Không thể tra cứu mã nhân viên"
+            )
         self.result_label.setText("Không thể ghi nhận lượt xe.")
         QMessageBox.warning(self, "Không thể ghi nhận", message)
 
     def show_plate_result(self, plate):
         self.plate_result_label.setText(plate or "Không đọc được biển số")
+        if plate:
+            self.employee_result_label.setText("Mã nhân viên: Đang tra cứu...")
+        else:
+            self.employee_result_label.setText("Mã nhân viên: Chờ xác minh biển số")
+
+    def show_employee_result(self, employee_id, employee_name, vehicle_type):
+        if employee_id:
+            display = f"Mã nhân viên: {employee_id}"
+            if employee_name:
+                display += f" - {employee_name}"
+        elif vehicle_type == "Khách vãng lai":
+            display = "Khách vãng lai - Không có mã nhân viên"
+        elif vehicle_type == "Chờ xác minh" or not vehicle_type:
+            display = "Mã nhân viên: Chờ xác minh biển số"
+        else:
+            display = "Không tìm thấy mã nhân viên"
+        self.employee_result_label.setText(display)
 
     def worker_finished(self):
+        self.recognition_timer.stop()
+        self.recognition_stage = ""
         self.capture_button.setEnabled(True)
         self.worker = None
         self.resources_changed.emit()
@@ -1187,7 +1341,7 @@ class MainWindow(QMainWindow):
         self._populate_review_table(
             self.open_sessions_table,
             self._open_session_rows,
-            ["Thời gian", "Biển số", "Loại xe", "Mã nhân viên"],
+            ["Thời gian", "Biển số", "Loại xe", "Mã nhân viên", "Trạng thái"],
             "Mã phiên",
         )
         self.clear_review_previews()
@@ -1227,14 +1381,25 @@ class MainWindow(QMainWindow):
             pending.get("Biển số OCR", "") or pending.get("Biển số", "")
         )
         if pending.get("Cổng") == "Ra":
-            for index, session in enumerate(self._open_session_rows):
-                if (
-                    pending.get("Biển số OCR")
-                    and normalize_plate(session.get("Biển số", ""))
-                    == normalize_plate(pending["Biển số OCR"])
-                ):
-                    self.open_sessions_table.selectRow(index)
-                    break
+            plate = normalize_plate(
+                pending.get("Biển số OCR", "") or pending.get("Biển số", "")
+            )
+            matching_indices = [
+                index
+                for index, session in enumerate(self._open_session_rows)
+                if plate
+                and normalize_plate(session.get("Biển số", "")) == plate
+            ]
+            if len(matching_indices) == 1:
+                self.open_sessions_table.selectRow(matching_indices[0])
+        elif pending.get("Cổng") == "Vào":
+            matching_indices = [
+                index
+                for index, session in enumerate(self._open_session_rows)
+                if session.get("Mã phiên") == pending.get("Mã phiên")
+            ]
+            if len(matching_indices) == 1:
+                self.open_sessions_table.selectRow(matching_indices[0])
 
     def load_session_preview(self):
         row_index = self.open_sessions_table.currentRow()

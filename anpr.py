@@ -297,15 +297,20 @@ def _plate_candidates(result):
     return candidates
 
 
-def recognize_plate(image, on_crop_detected=None):
+def recognize_plate(image, on_crop_detected=None, on_progress=None):
     if image is None or image.size == 0:
         raise ANPRError("Không có ảnh hợp lệ để nhận diện.")
 
     if len(image.shape) != 3 or image.shape[2] != 3:
         raise ANPRError("Ảnh đầu vào phải có đủ ba kênh màu.")
 
+    def report_progress(message):
+        if on_progress is not None:
+            on_progress(message)
+
     try:
         with _INFERENCE_LOCK:
+            report_progress("Đang định vị biển số bằng YOLO...")
             crops = _detect_plate_crops(image)
             if not crops:
                 raise ANPRError(
@@ -318,7 +323,11 @@ def recognize_plate(image, on_crop_detected=None):
                 if on_crop_detected is not None:
                     on_crop_detected(crop, vehicle_crop)
                 if engine is None:
+                    report_progress("Đang khởi tạo OCR...")
                     engine = _get_ocr_engine()
+                report_progress(
+                    f"Đang OCR biển số ({crop_index + 1}/{len(crops)})..."
+                )
                 prepared = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
                 results = engine.predict(
                     prepared,
@@ -333,6 +342,7 @@ def recognize_plate(image, on_crop_detected=None):
                     return max(candidates, key=lambda candidate: candidate[1])[0]
 
                 if crop_index == 0:
+                    report_progress("Đang thử OCR dự phòng...")
                     fallback_results = engine.predict(
                         prepared,
                         text_det_limit_side_len=_OCR_FALLBACK_DETECTION_SIDE,
