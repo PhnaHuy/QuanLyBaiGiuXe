@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -31,6 +32,212 @@ from anpr import ANPRError, initialize_models, normalize_plate, recognize_plate
 from camera_thread import CameraThread, crop_frame_to_aspect
 from excel_db import ExcelDatabase, ExcelDatabaseError
 from image_store import CaptureStorage, CaptureStorageError
+
+
+DASHBOARD_STYLESHEET = """
+QMainWindow, QWidget#dashboardRoot {
+    background-color: #f3f6fb;
+    color: #172b4d;
+    font-family: "Segoe UI";
+    font-size: 10pt;
+}
+QLabel {
+    color: #344563;
+}
+QLabel#pageTitle {
+    color: #172b4d;
+    font-size: 20pt;
+    font-weight: 700;
+}
+QLabel#pageSubtitle {
+    color: #6b778c;
+    font-size: 9pt;
+}
+QLabel#sectionEyebrow {
+    color: #6b778c;
+    font-size: 8pt;
+    font-weight: 700;
+}
+QLabel#modelStatus {
+    background-color: #fff7e6;
+    color: #8a6116;
+    border: 1px solid #ffe2a8;
+    border-radius: 12px;
+    padding: 7px 12px;
+    font-weight: 600;
+}
+QLabel#modelStatus[ready="true"] {
+    background-color: #e7f6ec;
+    color: #26734d;
+    border-color: #b7e4c7;
+}
+QLabel#modelStatus[ready="false"] {
+    background-color: #fff0ef;
+    color: #b42318;
+    border-color: #ffd1cc;
+}
+QTabWidget::pane {
+    background-color: #f3f6fb;
+    border: none;
+    top: -1px;
+}
+QTabBar {
+    background-color: transparent;
+}
+QTabBar::tab {
+    background-color: transparent;
+    color: #63728a;
+    border: none;
+    border-bottom: 3px solid transparent;
+    padding: 13px 18px 11px;
+    margin-right: 4px;
+    font-weight: 600;
+}
+QTabBar::tab:hover {
+    color: #175cd3;
+    background-color: #eaf1fb;
+}
+QTabBar::tab:selected {
+    color: #175cd3;
+    border-bottom-color: #2e6bd1;
+}
+QGroupBox {
+    background-color: #ffffff;
+    border: 1px solid #e1e7f0;
+    border-radius: 10px;
+    margin-top: 12px;
+    padding: 16px 14px 14px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 14px;
+    padding: 0 5px;
+    color: #344563;
+    background-color: #ffffff;
+}
+QWidget#controlSurface, QWidget#previewSurface {
+    background-color: #f8fafd;
+    border: 1px solid #e6ebf2;
+    border-radius: 8px;
+}
+QWidget#tabPage {
+    background-color: #f3f6fb;
+}
+QLineEdit {
+    background-color: #ffffff;
+    color: #172b4d;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 8px 10px;
+    selection-background-color: #2e6bd1;
+    min-height: 20px;
+}
+QLineEdit:hover {
+    border-color: #98a9c1;
+}
+QLineEdit:focus {
+    border: 1px solid #2e6bd1;
+}
+QPushButton {
+    background-color: #ffffff;
+    color: #344563;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 8px 13px;
+    min-height: 20px;
+    font-weight: 600;
+}
+QPushButton:hover {
+    background-color: #f5f8fc;
+    border-color: #98a9c1;
+}
+QPushButton:pressed {
+    background-color: #e9eef6;
+}
+QPushButton:disabled {
+    background-color: #f1f3f6;
+    color: #98a1ae;
+    border-color: #e1e5eb;
+}
+QPushButton[variant="primary"] {
+    background-color: #245fcb;
+    color: #ffffff;
+    border-color: #245fcb;
+}
+QPushButton[variant="primary"]:hover {
+    background-color: #194eae;
+    border-color: #194eae;
+}
+QPushButton[variant="success"] {
+    background-color: #238653;
+    color: #ffffff;
+    border-color: #238653;
+}
+QPushButton[variant="success"]:hover {
+    background-color: #196e42;
+    border-color: #196e42;
+}
+QPushButton[variant="danger"] {
+    color: #b42318;
+    border-color: #f0c4c0;
+}
+QPushButton[variant="danger"]:hover {
+    background-color: #fff0ef;
+}
+QTableWidget {
+    background-color: #ffffff;
+    alternate-background-color: #f7f9fc;
+    color: #344563;
+    border: 1px solid #e1e7f0;
+    border-radius: 7px;
+    gridline-color: #edf0f5;
+    selection-background-color: #e8f0fe;
+    selection-color: #174ea6;
+    outline: none;
+}
+QHeaderView::section {
+    background-color: #f3f6fb;
+    color: #52637a;
+    border: none;
+    border-bottom: 1px solid #e1e7f0;
+    padding: 9px 8px;
+    font-weight: 700;
+}
+QStatusBar {
+    background-color: #ffffff;
+    color: #63728a;
+    border-top: 1px solid #e1e7f0;
+}
+QMessageBox {
+    background-color: #ffffff;
+    color: #172b4d;
+    font-family: "Segoe UI";
+    font-size: 10pt;
+}
+QMessageBox QLabel {
+    background-color: transparent;
+    color: #172b4d;
+}
+QMessageBox QPushButton {
+    min-width: 84px;
+}
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical {
+    background: #c8d1df;
+    border-radius: 4px;
+    min-height: 24px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
+    border: none;
+}
+"""
 
 
 class RecognitionWorker(QThread):
@@ -147,16 +354,30 @@ class GatePanel(QGroupBox):
         self.worker = None
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 18, 14, 14)
+        layout.setSpacing(12)
+
+        control_surface = QWidget()
+        control_surface.setObjectName("controlSurface")
+        control_layout = QVBoxLayout(control_surface)
+        control_layout.setContentsMargins(12, 10, 12, 10)
+        control_layout.setSpacing(7)
+        source_title = QLabel("NGUỒN GIÁM SÁT")
+        source_title.setObjectName("sectionEyebrow")
+        control_layout.addWidget(source_title)
+
         source_row = QHBoxLayout()
+        source_row.setSpacing(8)
         self.source_input = QLineEdit(default_source)
         self.source_input.setPlaceholderText("Nhập chỉ số webcam hoặc đường dẫn tệp video")
         self.browse_button = QPushButton("Chọn tệp video...")
         self.open_button = QPushButton("Mở nguồn")
-        source_row.addWidget(QLabel("Nguồn hình ảnh:"))
         source_row.addWidget(self.source_input, 1)
         source_row.addWidget(self.browse_button)
         source_row.addWidget(self.open_button)
-        layout.addLayout(source_row)
+        self.open_button.setProperty("variant", "primary")
+        control_layout.addLayout(source_row)
+        layout.addWidget(control_surface)
 
         video_container = QWidget()
         video_layout = QHBoxLayout(video_container)
@@ -171,10 +392,11 @@ class GatePanel(QGroupBox):
         video_layout.addWidget(self.video_label, 7)
 
         preview_panel = QWidget()
+        preview_panel.setObjectName("previewSurface")
         preview_panel.setMinimumWidth(0)
         preview_layout = QVBoxLayout(preview_panel)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.setSpacing(6)
+        preview_layout.setContentsMargins(8, 8, 8, 8)
+        preview_layout.setSpacing(8)
 
         self.plate_crop_panel, self.plate_crop_label = self.create_crop_preview(
             "Biển số",
@@ -196,16 +418,18 @@ class GatePanel(QGroupBox):
         self.plate_result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.plate_result_label.setMinimumHeight(54)
         self.plate_result_label.setStyleSheet(
-            "font-size: 26px; font-weight: bold; color: #155724; "
-            "background-color: #e8f5e9; border: 2px solid #81c784; "
-            "padding: 6px;"
+            "font-size: 26px; font-weight: bold; color: #175cd3; "
+            "background-color: #eef4ff; border: 1px solid #c7d7f5; "
+            "border-radius: 8px; padding: 6px;"
         )
         layout.addWidget(self.plate_result_label)
 
         self.result_label = QLabel("Chưa ghi nhận lượt xe")
         self.result_label.setWordWrap(True)
+        self.result_label.setStyleSheet("color: #63728a; padding: 2px 4px;")
         self.capture_button = QPushButton(f"Chụp & Ghi nhận Xe {gate}")
-        self.capture_button.setMinimumHeight(38)
+        self.capture_button.setProperty("variant", "success")
+        self.capture_button.setMinimumHeight(42)
         layout.addWidget(self.result_label)
         layout.addWidget(self.capture_button)
 
@@ -328,7 +552,8 @@ class GatePanel(QGroupBox):
         preview_label.setWordWrap(True)
         preview_label.setMinimumHeight(75)
         preview_label.setStyleSheet(
-            "background-color: #20252b; color: white; border: 1px solid #6c757d;"
+            "background-color: #f1f4f8; color: #748198; "
+            "border: 1px solid #dfe5ed; border-radius: 6px;"
         )
         layout.addWidget(title_label)
         layout.addWidget(preview_label, 1)
@@ -419,14 +644,50 @@ class MainWindow(QMainWindow):
         self.database = database
         self.setWindowTitle("Quản lý bãi giữ xe thông minh")
         self.resize(1200, 820)
+        self.setMinimumSize(1000, 700)
         self._staff_original_id = None
 
+        root = QWidget()
+        root.setObjectName("dashboardRoot")
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(22, 16, 22, 10)
+        root_layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        title_block = QVBoxLayout()
+        title_block.setSpacing(2)
+        eyebrow = QLabel("PARKING OPERATIONS")
+        eyebrow.setObjectName("sectionEyebrow")
+        title = QLabel("Trung tâm điều hành")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("Giám sát phương tiện, dữ liệu và nhân sự")
+        subtitle.setObjectName("pageSubtitle")
+        title_block.addWidget(eyebrow)
+        title_block.addWidget(title)
+        title_block.addWidget(subtitle)
+        header.addLayout(title_block)
+        header.addStretch(1)
+
+        self.model_status_label = QLabel("Đang khởi tạo model")
+        self.model_status_label.setObjectName("modelStatus")
+        self.model_status_label.setProperty("ready", "loading")
+        self.model_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.model_status_label.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        header.addWidget(self.model_status_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        root_layout.addLayout(header)
+
         self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
+        self.tabs.setDocumentMode(True)
+        self.tabs.setMovable(False)
         self.tabs.addTab(self.create_operation_tab(), "Điều hành")
         self.tabs.addTab(self.create_logs_tab(), "Quản lý lịch sử")
         self.tabs.addTab(self.create_staff_tab(), "Quản lý nhân sự")
         self.tabs.addTab(self.create_review_tab(), "Đối chiếu lượt xe")
+        root_layout.addWidget(self.tabs, 1)
+        self.setCentralWidget(root)
         self.tabs.currentChanged.connect(self.tab_changed)
         self.refresh_staff()
         self.statusBar().showMessage("Đang nạp và làm nóng model nhận diện...")
@@ -440,15 +701,27 @@ class MainWindow(QMainWindow):
         self.model_warmup_worker = None
 
     def models_ready(self):
+        self.model_status_label.setText("Model nhận diện sẵn sàng")
+        self.model_status_label.setProperty("ready", "true")
+        self.model_status_label.style().unpolish(self.model_status_label)
+        self.model_status_label.style().polish(self.model_status_label)
         self.statusBar().showMessage("Model nhận diện đã sẵn sàng.", 5000)
 
     def model_warmup_failed(self, message):
+        self.model_status_label.setText("Model chưa sẵn sàng")
+        self.model_status_label.setProperty("ready", "false")
+        self.model_status_label.style().unpolish(self.model_status_label)
+        self.model_status_label.style().polish(self.model_status_label)
         self.statusBar().showMessage("Không thể khởi tạo model nhận diện.")
         QMessageBox.warning(self, "Lỗi khởi tạo model", message)
 
     def create_operation_tab(self):
         tab = QWidget()
+        tab.setObjectName("tabPage")
         layout = QGridLayout(tab)
+        layout.setContentsMargins(4, 14, 4, 4)
+        layout.setHorizontalSpacing(14)
+        layout.setVerticalSpacing(12)
         self.entry_panel = GatePanel("Vào", "0", self.database)
         self.exit_panel = GatePanel("Ra", "1", self.database)
         layout.addWidget(self.entry_panel, 0, 0)
@@ -468,11 +741,18 @@ class MainWindow(QMainWindow):
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(38)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
     def create_logs_tab(self):
         tab = QWidget()
+        tab.setObjectName("tabPage")
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(4, 14, 4, 4)
+        layout.setSpacing(12)
         self.logs_table = QTableWidget()
         self.setup_table(self.logs_table)
         layout.addWidget(self.logs_table)
@@ -481,6 +761,7 @@ class MainWindow(QMainWindow):
         buttons.addStretch()
         refresh_button = QPushButton("Làm mới")
         export_button = QPushButton("Xuất báo cáo")
+        export_button.setProperty("variant", "primary")
         buttons.addWidget(refresh_button)
         buttons.addWidget(export_button)
         layout.addLayout(buttons)
@@ -490,7 +771,10 @@ class MainWindow(QMainWindow):
 
     def create_staff_tab(self):
         tab = QWidget()
+        tab.setObjectName("tabPage")
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(4, 14, 4, 4)
+        layout.setSpacing(12)
         self.staff_table = QTableWidget()
         self.setup_table(self.staff_table)
         self.staff_table.itemSelectionChanged.connect(self.load_selected_staff)
@@ -498,6 +782,8 @@ class MainWindow(QMainWindow):
 
         form_box = QGroupBox("Thông tin nhân sự")
         form = QFormLayout(form_box)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(10)
         self.employee_id_input = QLineEdit()
         self.employee_name_input = QLineEdit()
         self.plate_input = QLineEdit()
@@ -510,6 +796,8 @@ class MainWindow(QMainWindow):
         self.add_staff_button = QPushButton("Thêm mới")
         self.update_staff_button = QPushButton("Sửa")
         self.delete_staff_button = QPushButton("Xóa")
+        self.add_staff_button.setProperty("variant", "primary")
+        self.delete_staff_button.setProperty("variant", "danger")
         clear_button = QPushButton("Xóa trắng")
         for button in (
             self.add_staff_button,
@@ -531,7 +819,10 @@ class MainWindow(QMainWindow):
 
     def create_review_tab(self):
         tab = QWidget()
+        tab.setObjectName("tabPage")
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(4, 14, 4, 4)
+        layout.setSpacing(12)
         tables = QHBoxLayout()
 
         pending_box = QGroupBox("Lượt cần xác minh")
@@ -574,6 +865,7 @@ class MainWindow(QMainWindow):
             "Biển số xác nhận hoặc sửa lại"
         )
         self.review_button = QPushButton("Xác nhận đối chiếu")
+        self.review_button.setProperty("variant", "primary")
         refresh_button = QPushButton("Làm mới")
         form.addWidget(QLabel("Biển số:"))
         form.addWidget(self.review_plate_input, 1)
@@ -597,7 +889,8 @@ class MainWindow(QMainWindow):
             image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             image_label.setMinimumSize(100, 100)
             image_label.setStyleSheet(
-                "background-color: #20252b; color: white; border: 1px solid #6c757d;"
+                "background-color: #f1f4f8; color: #748198; "
+                "border: 1px solid #dfe5ed; border-radius: 6px;"
             )
             column.addWidget(image_label, 1)
             layout.addLayout(column, 1)

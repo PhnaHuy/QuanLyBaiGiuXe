@@ -4,12 +4,13 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from excel_db import ExcelDatabase, ExcelDatabaseError
-from ui import MainWindow
+from ui import DASHBOARD_STYLESHEET, MainWindow
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Quản lý bãi giữ xe")
+    app.setStyleSheet(DASHBOARD_STYLESHEET)
 
     data_directory = Path(__file__).resolve().parent
     database = ExcelDatabase(data_directory)
