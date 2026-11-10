@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 from PySide6.QtCore import Qt, QThread, Signal
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from anpr import ANPRError, recognize_plate
+from anpr import ANPRError, initialize_models, recognize_plate
 from camera_thread import CameraThread
 from excel_db import ExcelDatabase, ExcelDatabaseError
 
@@ -41,7 +42,9 @@ class RecognitionWorker(QThread):
 
     def run(self):
         try:
+            recognition_started = perf_counter()
             plate = recognize_plate(self.image)
+            recognition_seconds = perf_counter() - recognition_started
             staff = self.database.find_staff_by_plate(plate)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             result = {
@@ -51,6 +54,7 @@ class RecognitionWorker(QThread):
                 "Loại xe": "Nhân viên" if staff else "Khách vãng lai",
                 "Mã nhân viên": staff["Mã nhân viên"] if staff else "",
                 "Tên nhân viên": staff["Tên nhân viên"] if staff else "",
+                "Thời gian nhận diện": recognition_seconds,
             }
             self.database.add_log(result)
         except (ANPRError, ExcelDatabaseError, ValueError) as error:
@@ -59,6 +63,21 @@ class RecognitionWorker(QThread):
             self.failed.emit(f"Đã xảy ra lỗi khi ghi nhận lượt xe: {error}")
         else:
             self.completed.emit(result)
+
+
+class ModelWarmupWorker(QThread):
+    ready = Signal()
+    failed = Signal(str)
+
+    def run(self):
+        try:
+            initialize_models()
+        except ANPRError as error:
+            self.failed.emit(str(error))
+        except Exception as error:
+            self.failed.emit(f"Không thể khởi tạo model nhận diện: {error}")
+        else:
+            self.ready.emit()
 
 
 class GatePanel(QGroupBox):
@@ -175,7 +194,8 @@ class GatePanel(QGroupBox):
         else:
             detail = "Khách vãng lai"
         self.result_label.setText(
-            f'Đã ghi nhận xe {result["Biển số"]} tại lối {self.gate}. {detail}.'
+            f'Đã ghi nhận xe {result["Biển số"]} tại lối {self.gate}. {detail}. '
+            f'Nhận diện: {result["Thời gian nhận diện"]:.2f} giây.'
         )
 
     def show_record_error(self, message):
@@ -207,6 +227,22 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.create_staff_tab(), "Quản lý nhân sự")
         self.tabs.currentChanged.connect(self.tab_changed)
         self.refresh_staff()
+        self.statusBar().showMessage("Đang nạp và làm nóng model nhận diện...")
+        self.model_warmup_worker = ModelWarmupWorker(self)
+        self.model_warmup_worker.ready.connect(self.models_ready)
+        self.model_warmup_worker.failed.connect(self.model_warmup_failed)
+        self.model_warmup_worker.finished.connect(self.model_warmup_finished)
+        self.model_warmup_worker.start()
+
+    def model_warmup_finished(self):
+        self.model_warmup_worker = None
+
+    def models_ready(self):
+        self.statusBar().showMessage("Model nhận diện đã sẵn sàng.", 5000)
+
+    def model_warmup_failed(self, message):
+        self.statusBar().showMessage("Không thể khởi tạo model nhận diện.")
+        QMessageBox.warning(self, "Lỗi khởi tạo model", message)
 
     def create_operation_tab(self):
         tab = QWidget()
@@ -423,4 +459,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self.entry_panel.close_resources()
         self.exit_panel.close_resources()
+        if self.model_warmup_worker is not None and self.model_warmup_worker.isRunning():
+            self.model_warmup_worker.wait()
         event.accept()
