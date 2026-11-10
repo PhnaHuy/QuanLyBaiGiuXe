@@ -8,13 +8,15 @@ Hệ thống là ứng dụng desktop chạy trên Windows, hỗ trợ nhân vi�
 
 ### 1.2. Phạm vi chức năng
 
-Hệ thống hiện có ba nhóm chức năng:
+Hệ thống hiện có các nhóm chức năng:
 
-1. **Điều hành:** mở nguồn hình ảnh cho lối vào/lối ra, xem hình trực tiếp và chụp khung hình để nhận diện, ghi nhận lượt xe.
-2. **Quản lý lịch sử:** xem nhật ký lượt xe và xuất báo cáo ra Excel hoặc CSV.
-3. **Quản lý nhân sự:** xem, thêm, sửa và xóa thông tin nhân viên cùng biển số xe được gán.
+1. **Xác thực và phân quyền giao diện:** chọn vai trò Admin hoặc Nhân viên khi khởi động; Admin nhập mật khẩu mặc định `123`.
+2. **Điều hành:** mở nguồn hình ảnh cho lối vào/lối ra, xem hình trực tiếp và chụp khung hình để nhận diện, ghi nhận lượt xe.
+3. **Đối chiếu lượt xe:** xác minh OCR, xem ảnh bằng chứng và ghép lượt xe vào/ra.
+4. **Quản lý lịch sử:** Admin xem nhật ký lượt xe và xuất báo cáo ra Excel hoặc CSV.
+5. **Quản lý nhân sự:** Admin xem, thêm, sửa và xóa thông tin nhân viên cùng biển số xe được gán.
 
-Đây là ứng dụng đơn máy, dữ liệu lưu trong các tệp Excel bên cạnh mã nguồn. Hệ thống chưa có máy chủ trung tâm, tài khoản hoặc phân quyền người dùng, xử lý thanh toán, nhận diện khuôn mặt, hoặc cơ chế tự động đối chiếu lượt vào–ra.
+Đây là ứng dụng đơn máy, dữ liệu lưu trong các tệp Excel bên cạnh mã nguồn. Hệ thống chưa có máy chủ trung tâm, tài khoản riêng cho từng người dùng, xử lý thanh toán, nhận diện khuôn mặt, hoặc cơ chế tự động đối chiếu lượt vào–ra.
 
 ### 1.3. Thuật ngữ
 
@@ -31,14 +33,14 @@ Hệ thống hiện có ba nhóm chức năng:
 
 | Tác nhân | Vai trò và mục tiêu | Tương tác với hệ thống |
 |---|---|---|
-| Nhân viên bảo vệ / vận hành | Theo dõi hình ảnh tại lối vào hoặc lối ra và ghi nhận xe khi cần. | Mở webcam hoặc chọn video, xem khung hình, chụp và ghi nhận, xem kết quả hoặc thông báo lỗi. |
-| Nhân viên quản lý bãi xe | Quản lý dữ liệu nhân viên, kiểm tra nhật ký và tạo báo cáo. | Thêm/sửa/xóa hồ sơ nhân viên; xem/làm mới lịch sử; xuất Excel hoặc CSV. |
+| Admin | Quản trị toàn bộ chức năng ứng dụng. | Đăng nhập bằng mật khẩu mặc định `123`; truy cập Điều hành, Đối chiếu lượt xe, Quản lý lịch sử và Quản lý nhân sự. |
+| Nhân viên vận hành | Theo dõi hình ảnh tại lối vào hoặc lối ra và ghi nhận xe khi cần. | Chọn vai trò Nhân viên không cần mật khẩu; sử dụng Điều hành và Đối chiếu lượt xe. |
 | Nhân viên gửi xe | Đối tượng được nhận diện khi biển số khớp với hồ sơ nhân viên. | Không thao tác trực tiếp trên phần mềm; hồ sơ của họ được nhân viên quản lý khai báo. |
 | Khách vãng lai | Đối tượng có xe không khớp danh sách nhân viên. | Không thao tác trực tiếp; lượt xe được nhân viên vận hành ghi nhận. |
 | Webcam / tệp video | Nguồn ảnh đầu vào cho chức năng điều hành. | Cung cấp các khung hình để hiển thị và chụp nhận diện. |
 | Model nhận diện | Thành phần kỹ thuật phát hiện và đọc biển số. | YOLO xác định vùng biển số; PaddleOCR đọc ký tự từ vùng cắt. |
 
-Các vai trò người dùng trong bảng là vai trò nghiệp vụ, không phải tài khoản đăng nhập. Phiên bản hiện tại không xác thực danh tính hay phân quyền thao tác.
+Vai trò đăng nhập được chọn tại hộp thoại trước khi khởi tạo ứng dụng. Mật khẩu Admin mặc định được đặt trong mã nguồn; đây là giới hạn quyền ở giao diện cục bộ, không phải cơ chế xác thực chống truy cập trực tiếp vào các tệp dữ liệu.
 
 ## 3. User Story
 
@@ -137,6 +139,18 @@ Các vai trò người dùng trong bảng là vai trò nghiệp vụ, không ph�
 - YOLO được nạp từ `models\license_plate_yolov8n.pt` trong dự án, trừ khi có cấu hình ghi đè.
 - PaddleOCR được khởi tạo và có thể cần tải model ở lần chạy đầu.
 - Trạng thái sẵn sàng hoặc lỗi khởi tạo được hiển thị cho người dùng.
+
+### US-10 — Đăng nhập theo vai trò
+
+**Là** người sử dụng, **tôi muốn** chọn vai trò trước khi vào hệ thống, **để** chỉ truy cập các chức năng phù hợp với nhiệm vụ.
+
+**Điều kiện chấp nhận**
+
+- Hộp thoại đăng nhập xuất hiện trước khi khởi tạo dữ liệu và Dashboard.
+- Admin phải nhập đúng mật khẩu mặc định `123`; Nhân viên không cần mật khẩu.
+- Admin có đầy đủ các tab; Nhân viên chỉ có Điều hành và Đối chiếu lượt xe.
+- Hủy đăng nhập hoặc nhập sai mật khẩu Admin không mở Dashboard.
+- Nút Đăng xuất kết thúc phiên hiện tại, dừng nguồn camera và quay lại hộp thoại để chọn vai trò khác mà không khởi động lại ứng dụng.
 
 ## 4. Mô hình phân chia module
 
@@ -302,7 +316,7 @@ Nhật ký không lưu tên nhân viên, trạng thái thanh toán hoặc dữ l
 5. Hai bảng điều hành cho phép chọn nguồn riêng, nhưng hệ thống không xác thực đó là vị trí vào/ra vật lý tương ứng.
 6. Excel là kho dữ liệu cục bộ; không hỗ trợ nhiều máy cùng ghi dữ liệu an toàn qua mạng.
 7. Báo cáo xuất toàn bộ nhật ký, chưa có lọc theo ngày, cổng, biển số hoặc loại xe.
-8. Người dùng thao tác trong ứng dụng không cần đăng nhập; mọi người dùng máy có thể truy cập các chức năng hiện có.
+8. Người dùng phải chọn vai trò khi khởi động. Nhân viên chỉ được dùng Điều hành và Đối chiếu lượt xe; các thao tác quản lý lịch sử/nhân sự được giới hạn cho Admin. Mật khẩu Admin mặc định là `123`, không có cơ chế đổi mật khẩu hoặc tài khoản riêng.
 
 ## 8. Đặc tính kỹ thuật liên quan
 

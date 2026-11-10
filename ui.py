@@ -6,9 +6,12 @@ from uuid import uuid4
 import cv2
 import pandas as pd
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QColor, QImage, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -35,6 +38,9 @@ from image_store import CaptureStorage, CaptureStorageError
 
 
 DASHBOARD_STYLESHEET = """
+QWidget {
+    color: #172b4d;
+}
 QMainWindow, QWidget#dashboardRoot {
     background-color: #f3f6fb;
     color: #172b4d;
@@ -103,6 +109,7 @@ QTabBar::tab:selected {
 }
 QGroupBox {
     background-color: #ffffff;
+    color: #172b4d;
     border: 1px solid #e1e7f0;
     border-radius: 10px;
     margin-top: 12px;
@@ -209,17 +216,24 @@ QStatusBar {
     color: #63728a;
     border-top: 1px solid #e1e7f0;
 }
-QMessageBox {
+QDialog, QMessageBox {
     background-color: #ffffff;
     color: #172b4d;
     font-family: "Segoe UI";
     font-size: 10pt;
 }
-QMessageBox QLabel {
+QDialog QLabel, QMessageBox QLabel {
     background-color: transparent;
     color: #172b4d;
 }
-QMessageBox QPushButton {
+QDialog QLineEdit, QDialog QComboBox {
+    background-color: #ffffff;
+    color: #172b4d;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 7px 9px;
+}
+QDialog QPushButton, QMessageBox QPushButton {
     min-width: 84px;
 }
 QScrollBar:vertical {
@@ -238,6 +252,123 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     border: none;
 }
 """
+
+
+def configure_light_theme(application):
+    palette = application.palette()
+    colors = {
+        QPalette.ColorRole.Window: "#f3f6fb",
+        QPalette.ColorRole.WindowText: "#172b4d",
+        QPalette.ColorRole.Base: "#ffffff",
+        QPalette.ColorRole.AlternateBase: "#f7f9fc",
+        QPalette.ColorRole.Text: "#172b4d",
+        QPalette.ColorRole.Button: "#ffffff",
+        QPalette.ColorRole.ButtonText: "#172b4d",
+        QPalette.ColorRole.ToolTipBase: "#ffffff",
+        QPalette.ColorRole.ToolTipText: "#172b4d",
+        QPalette.ColorRole.PlaceholderText: "#748198",
+        QPalette.ColorRole.Highlight: "#2e6bd1",
+        QPalette.ColorRole.HighlightedText: "#ffffff",
+    }
+    for role, color in colors.items():
+        palette.setColor(role, QColor(color))
+    application.setPalette(palette)
+    application.setStyleSheet(DASHBOARD_STYLESHEET)
+
+
+ADMIN_ROLE = "Admin"
+EMPLOYEE_ROLE = "Nhân viên"
+ADMIN_DEFAULT_PASSWORD = "123"
+
+
+class LoginDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Đăng nhập hệ thống")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+        self.selected_role = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Xác thực truy cập")
+        title.setStyleSheet(
+            "color: #172b4d; font-size: 16pt; font-weight: 700;"
+        )
+        subtitle = QLabel("Chọn vai trò để tiếp tục vào hệ thống.")
+        subtitle.setStyleSheet("color: #6b778c;")
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
+        self.role_combo = QComboBox()
+        self.role_combo.addItem("Chọn vai trò...", None)
+        self.role_combo.addItem(ADMIN_ROLE, ADMIN_ROLE)
+        self.role_combo.addItem(EMPLOYEE_ROLE, EMPLOYEE_ROLE)
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_input.setPlaceholderText("Nhập mật khẩu Admin")
+        self.password_label = QLabel("Mật khẩu:")
+        form.addRow("Vai trò:", self.role_combo)
+        form.addRow(self.password_label, self.password_input)
+        layout.addLayout(form)
+
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: #b42318;")
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
+
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.login_button = self.buttons.button(
+            QDialogButtonBox.StandardButton.Ok
+        )
+        self.login_button.setText("Đăng nhập")
+        self.login_button.setProperty("variant", "primary")
+        self.buttons.button(
+            QDialogButtonBox.StandardButton.Cancel
+        ).setText("Hủy")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+
+        self.role_combo.currentIndexChanged.connect(self.update_role_fields)
+        self.password_input.returnPressed.connect(self.accept)
+        self.update_role_fields()
+
+    def update_role_fields(self):
+        is_admin = self.role_combo.currentData() == ADMIN_ROLE
+        self.password_label.setVisible(is_admin)
+        self.password_input.setVisible(is_admin)
+        if not is_admin:
+            self.password_input.clear()
+        self.error_label.clear()
+        self.error_label.hide()
+
+    def accept(self):
+        role = self.role_combo.currentData()
+        if role is None:
+            self.error_label.setText("Vui lòng chọn vai trò đăng nhập.")
+            self.error_label.show()
+            return
+        if (
+            role == ADMIN_ROLE
+            and self.password_input.text() != ADMIN_DEFAULT_PASSWORD
+        ):
+            self.error_label.setText("Mật khẩu Admin không chính xác.")
+            self.error_label.show()
+            self.password_input.selectAll()
+            self.password_input.setFocus()
+            return
+        self.selected_role = role
+        super().accept()
 
 
 class RecognitionWorker(QThread):
@@ -345,6 +476,7 @@ class ModelWarmupWorker(QThread):
 
 class GatePanel(QGroupBox):
     record_saved = Signal()
+    resources_changed = Signal()
 
     def __init__(self, gate, default_source, database, parent=None):
         super().__init__(f"Lối {gate}", parent)
@@ -403,7 +535,7 @@ class GatePanel(QGroupBox):
             "Chưa phát hiện biển số",
         )
         self.vehicle_crop_panel, self.vehicle_crop_label = self.create_crop_preview(
-            "Xe (ước lượng)",
+            "Xe",
             "Chưa có ảnh xe",
         )
         preview_layout.addWidget(self.plate_crop_panel)
@@ -471,6 +603,26 @@ class GatePanel(QGroupBox):
             self.camera.wait()
             self.camera.deleteLater()
             self.camera = None
+
+    def request_camera_stop(self):
+        camera = self.camera
+        if camera is None:
+            return
+        camera.finished.connect(self._camera_finished)
+        if camera.isRunning():
+            camera.dung()
+        else:
+            self._camera_stopped(camera)
+
+    def _camera_finished(self):
+        if self.camera is not None:
+            self._camera_stopped(self.camera)
+
+    def _camera_stopped(self, camera):
+        if self.camera is camera:
+            self.camera = None
+            camera.deleteLater()
+            self.resources_changed.emit()
 
     def show_frame(self, image):
         target_size = self.video_label.size()
@@ -631,17 +783,31 @@ class GatePanel(QGroupBox):
     def worker_finished(self):
         self.capture_button.setEnabled(True)
         self.worker = None
+        self.resources_changed.emit()
 
     def close_resources(self):
         self.stop_camera()
         if self.worker is not None:
             self.worker.wait()
 
+    def is_processing(self):
+        return self.worker is not None and self.worker.isRunning()
+
 
 class MainWindow(QMainWindow):
-    def __init__(self, database):
+    logout_requested = Signal()
+    logout_cleanup_finished = Signal()
+    window_closed = Signal()
+
+    def __init__(self, database, role):
         super().__init__()
+        if role not in (ADMIN_ROLE, EMPLOYEE_ROLE):
+            raise ValueError(f"Vai trò không hợp lệ: {role}")
         self.database = database
+        self.role = role
+        self.is_admin = role == ADMIN_ROLE
+        self._logout_preparing = False
+        self._logout_cleanup_emitted = False
         self.setWindowTitle("Quản lý bãi giữ xe thông minh")
         self.resize(1200, 820)
         self.setMinimumSize(1000, 700)
@@ -668,6 +834,14 @@ class MainWindow(QMainWindow):
         header.addLayout(title_block)
         header.addStretch(1)
 
+        self.role_label = QLabel(f"Đang đăng nhập: {role}")
+        self.role_label.setStyleSheet(
+            "background-color: #eef4ff; color: #245fcb; "
+            "border: 1px solid #c7d7f5; border-radius: 12px; "
+            "padding: 7px 12px; font-weight: 600;"
+        )
+        header.addWidget(self.role_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.model_status_label = QLabel("Đang khởi tạo model")
         self.model_status_label.setObjectName("modelStatus")
         self.model_status_label.setProperty("ready", "loading")
@@ -677,19 +851,26 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Fixed,
         )
         header.addWidget(self.model_status_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.logout_button = QPushButton("Đăng xuất")
+        self.logout_button.setProperty("variant", "danger")
+        self.logout_button.setToolTip("Kết thúc phiên hiện tại và đổi vai trò")
+        self.logout_button.clicked.connect(self.request_logout)
+        header.addWidget(self.logout_button, 0, Qt.AlignmentFlag.AlignVCenter)
         root_layout.addLayout(header)
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.tabs.setMovable(False)
         self.tabs.addTab(self.create_operation_tab(), "Điều hành")
-        self.tabs.addTab(self.create_logs_tab(), "Quản lý lịch sử")
-        self.tabs.addTab(self.create_staff_tab(), "Quản lý nhân sự")
+        if self.is_admin:
+            self.tabs.addTab(self.create_logs_tab(), "Quản lý lịch sử")
+            self.tabs.addTab(self.create_staff_tab(), "Quản lý nhân sự")
         self.tabs.addTab(self.create_review_tab(), "Đối chiếu lượt xe")
         root_layout.addWidget(self.tabs, 1)
         self.setCentralWidget(root)
         self.tabs.currentChanged.connect(self.tab_changed)
-        self.refresh_staff()
+        if self.is_admin:
+            self.refresh_staff()
         self.statusBar().showMessage("Đang nạp và làm nóng model nhận diện...")
         self.model_warmup_worker = ModelWarmupWorker(self)
         self.model_warmup_worker.ready.connect(self.models_ready)
@@ -699,6 +880,7 @@ class MainWindow(QMainWindow):
 
     def model_warmup_finished(self):
         self.model_warmup_worker = None
+        self._check_logout_cleanup()
 
     def models_ready(self):
         self.model_status_label.setText("Model nhận diện sẵn sàng")
@@ -724,6 +906,8 @@ class MainWindow(QMainWindow):
         layout.setVerticalSpacing(12)
         self.entry_panel = GatePanel("Vào", "0", self.database)
         self.exit_panel = GatePanel("Ra", "1", self.database)
+        self.entry_panel.resources_changed.connect(self._check_logout_cleanup)
+        self.exit_panel.resources_changed.connect(self._check_logout_cleanup)
         layout.addWidget(self.entry_panel, 0, 0)
         layout.addWidget(self.exit_panel, 0, 1)
         layout.setColumnStretch(0, 1)
@@ -733,8 +917,60 @@ class MainWindow(QMainWindow):
         return tab
 
     def refresh_after_record(self):
-        self.refresh_logs()
+        if self.is_admin:
+            self.refresh_logs()
         self.refresh_review()
+
+    def request_logout(self):
+        if self.entry_panel.is_processing() or self.exit_panel.is_processing():
+            QMessageBox.warning(
+                self,
+                "Đang xử lý lượt xe",
+                "Vui lòng đợi thao tác nhận diện và ghi dữ liệu hoàn tất "
+                "trước khi đăng xuất.",
+            )
+            return
+        self.logout_requested.emit()
+
+    def prepare_for_logout(self):
+        if self._logout_preparing:
+            return
+        self._logout_preparing = True
+        self.setEnabled(False)
+        self.entry_panel.request_camera_stop()
+        self.exit_panel.request_camera_stop()
+        self._check_logout_cleanup()
+
+    def resources_stopped(self):
+        return (
+            self.entry_panel.camera is None
+            and not self.entry_panel.is_processing()
+            and self.exit_panel.camera is None
+            and not self.exit_panel.is_processing()
+            and (
+                self.model_warmup_worker is None
+                or not self.model_warmup_worker.isRunning()
+            )
+        )
+
+    def _check_logout_cleanup(self):
+        if (
+            self._logout_preparing
+            and not self._logout_cleanup_emitted
+            and self.resources_stopped()
+        ):
+            self._logout_cleanup_emitted = True
+            self.logout_cleanup_finished.emit()
+
+    def _require_admin(self):
+        if self.is_admin:
+            return True
+        QMessageBox.warning(
+            self,
+            "Không đủ quyền",
+            "Chức năng này chỉ dành cho Admin.",
+        )
+        return False
 
     @staticmethod
     def setup_table(table):
@@ -919,6 +1155,8 @@ class MainWindow(QMainWindow):
             table.setColumnHidden(column_index, column in hidden_columns)
 
     def refresh_logs(self):
+        if not self._require_admin():
+            return
         try:
             self.show_frame_data(self.logs_table, self.database.read_logs())
         except ExcelDatabaseError as error:
@@ -1102,7 +1340,8 @@ class MainWindow(QMainWindow):
             return
 
         self.refresh_review()
-        self.refresh_logs()
+        if self.is_admin:
+            self.refresh_logs()
         QMessageBox.information(
             self,
             "Đối chiếu lượt xe",
@@ -1110,6 +1349,8 @@ class MainWindow(QMainWindow):
         )
 
     def refresh_staff(self):
+        if not self._require_admin():
+            return
         try:
             self.show_frame_data(self.staff_table, self.database.read_staff())
         except ExcelDatabaseError as error:
@@ -1124,6 +1365,8 @@ class MainWindow(QMainWindow):
             self.refresh_review()
 
     def export_logs(self):
+        if not self._require_admin():
+            return
         path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Xuất báo cáo lịch sử",
@@ -1152,6 +1395,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Xuất báo cáo", "Đã xuất báo cáo thành công.")
 
     def load_selected_staff(self):
+        if not self._require_admin():
+            return
         selected = self.staff_table.selectedItems()
         has_selection = bool(selected)
         self.update_staff_button.setEnabled(has_selection)
@@ -1176,6 +1421,8 @@ class MainWindow(QMainWindow):
         }
 
     def add_staff(self):
+        if not self._require_admin():
+            return
         try:
             self.database.add_staff(self.staff_form_values())
         except (ExcelDatabaseError, ValueError) as error:
@@ -1186,6 +1433,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Quản lý nhân sự", "Đã thêm nhân sự thành công.")
 
     def update_staff(self):
+        if not self._require_admin():
+            return
         if self._staff_original_id is None:
             QMessageBox.warning(self, "Chưa chọn nhân sự", "Vui lòng chọn nhân sự cần sửa.")
             return
@@ -1199,6 +1448,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Quản lý nhân sự", "Đã cập nhật nhân sự thành công.")
 
     def delete_staff(self):
+        if not self._require_admin():
+            return
         if self._staff_original_id is None:
             QMessageBox.warning(self, "Chưa chọn nhân sự", "Vui lòng chọn nhân sự cần xóa.")
             return
@@ -1221,6 +1472,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Quản lý nhân sự", "Đã xóa nhân sự thành công.")
 
     def clear_staff_form(self):
+        if not self._require_admin():
+            return
         self.staff_table.clearSelection()
         self._staff_original_id = None
         self.employee_id_input.clear()
@@ -1230,8 +1483,13 @@ class MainWindow(QMainWindow):
         self.delete_staff_button.setEnabled(False)
 
     def closeEvent(self, event):
-        self.entry_panel.close_resources()
-        self.exit_panel.close_resources()
-        if self.model_warmup_worker is not None and self.model_warmup_worker.isRunning():
-            self.model_warmup_worker.wait()
+        if not self._logout_preparing:
+            self.entry_panel.close_resources()
+            self.exit_panel.close_resources()
+            if (
+                self.model_warmup_worker is not None
+                and self.model_warmup_worker.isRunning()
+            ):
+                self.model_warmup_worker.wait()
+            self.window_closed.emit()
         event.accept()
