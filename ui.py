@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from anpr import ANPRError, initialize_models, normalize_plate, recognize_plate
-from camera_thread import CameraThread
+from camera_thread import CameraThread, crop_frame_to_aspect
 from excel_db import ExcelDatabase, ExcelDatabaseError
 from image_store import CaptureStorage, CaptureStorageError
 
@@ -37,10 +37,12 @@ class RecognitionWorker(QThread):
     completed = Signal(dict)
     crop_detected = Signal(object, object)
     failed = Signal(str)
+    plate_recognized = Signal(str)
 
-    def __init__(self, image, gate, database, parent=None):
+    def __init__(self, image, original_image, gate, database, parent=None):
         super().__init__(parent)
         self.image = image
+        self.original_image = original_image
         self.gate = gate
         self.database = database
 
@@ -59,6 +61,7 @@ class RecognitionWorker(QThread):
 
         try:
             plate = recognize_plate(self.image, capture_crops)
+            self.plate_recognized.emit(plate)
         except ANPRError as error:
             recognition_error = str(error)
         except Exception as error:
@@ -71,7 +74,7 @@ class RecognitionWorker(QThread):
             storage = CaptureStorage(self.database.directory)
             image_paths = storage.save_capture(
                 event_id,
-                self.image,
+                self.original_image,
                 plate_crop,
                 vehicle_crop,
             )
@@ -134,6 +137,8 @@ class ModelWarmupWorker(QThread):
 
 
 class GatePanel(QGroupBox):
+    record_saved = Signal()
+
     def __init__(self, gate, default_source, database, parent=None):
         super().__init__(f"Lối {gate}", parent)
         self.gate = gate
@@ -186,6 +191,16 @@ class GatePanel(QGroupBox):
         video_layout.setStretch(1, 3)
         video_container.setMinimumHeight(270)
         layout.addWidget(video_container, 1)
+
+        self.plate_result_label = QLabel("Chưa có biển số")
+        self.plate_result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.plate_result_label.setMinimumHeight(54)
+        self.plate_result_label.setStyleSheet(
+            "font-size: 26px; font-weight: bold; color: #155724; "
+            "background-color: #e8f5e9; border: 2px solid #81c784; "
+            "padding: 6px;"
+        )
+        layout.addWidget(self.plate_result_label)
 
         self.result_label = QLabel("Chưa ghi nhận lượt xe")
         self.result_label.setWordWrap(True)
@@ -260,21 +275,38 @@ class GatePanel(QGroupBox):
         self.result_label.setText("Video đã phát đến cuối.")
 
     def record_vehicle(self):
-        self.clear_crop_previews()
         if self.camera is None or not self.camera.isRunning():
             QMessageBox.warning(self, "Chưa có hình ảnh", "Vui lòng mở nguồn hình ảnh trước khi ghi nhận xe.")
             return
-        image = self.camera.lay_khung_hinh()
-        if image is None:
-            QMessageBox.warning(self, "Chưa có hình ảnh", "Nguồn hình ảnh chưa cung cấp được khung hình.")
-            return
         if self.worker is not None and self.worker.isRunning():
             return
+        frame = self.camera.lay_khung_hinh()
+        if frame is None:
+            QMessageBox.warning(self, "Chưa có hình ảnh", "Nguồn hình ảnh chưa cung cấp được khung hình.")
+            return
+        try:
+            image = crop_frame_to_aspect(
+                frame,
+                self.video_label.width(),
+                self.video_label.height(),
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Không thể cắt khung hình", str(error))
+            return
 
+        self.clear_crop_previews()
+        self.plate_result_label.setText("Đang nhận diện...")
         self.capture_button.setEnabled(False)
         self.result_label.setText("Đang nhận diện biển số và ghi dữ liệu...")
-        self.worker = RecognitionWorker(image, self.gate, self.database, self)
+        self.worker = RecognitionWorker(
+            image,
+            frame,
+            self.gate,
+            self.database,
+            self,
+        )
         self.worker.crop_detected.connect(self.show_crop_previews)
+        self.worker.plate_recognized.connect(self.show_plate_result)
         self.worker.completed.connect(self.show_result)
         self.worker.failed.connect(self.show_record_error)
         self.worker.finished.connect(self.worker_finished)
@@ -340,7 +372,8 @@ class GatePanel(QGroupBox):
         self.vehicle_crop_label.setText("Chưa có ảnh xe")
 
     def show_result(self, result):
-        self.refresh_review()
+        plate = result["Biển số"]
+        self.show_plate_result(plate)
         employee = result["Mã nhân viên"]
         if employee:
             detail = f'Nhân viên {employee} - {result["Tên nhân viên"]}'
@@ -359,10 +392,16 @@ class GatePanel(QGroupBox):
             if result["Lỗi nhận diện"]:
                 message += f' Lỗi nhận diện: {result["Lỗi nhận diện"]}'
         self.result_label.setText(message)
+        self.record_saved.emit()
 
     def show_record_error(self, message):
+        if self.plate_result_label.text() == "Đang nhận diện...":
+            self.show_plate_result("")
         self.result_label.setText("Không thể ghi nhận lượt xe.")
         QMessageBox.warning(self, "Không thể ghi nhận", message)
+
+    def show_plate_result(self, plate):
+        self.plate_result_label.setText(plate or "Không đọc được biển số")
 
     def worker_finished(self):
         self.capture_button.setEnabled(True)
@@ -416,7 +455,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.exit_panel, 0, 1)
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
+        self.entry_panel.record_saved.connect(self.refresh_after_record)
+        self.exit_panel.record_saved.connect(self.refresh_after_record)
         return tab
+
+    def refresh_after_record(self):
+        self.refresh_logs()
+        self.refresh_review()
 
     @staticmethod
     def setup_table(table):

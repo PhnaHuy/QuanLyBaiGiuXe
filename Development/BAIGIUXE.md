@@ -218,8 +218,10 @@ Các thao tác đọc camera, nhận diện và làm nóng model chạy trong QT
 - Người dùng có thể nhập chỉ số webcam hoặc chọn tệp video.
 - Vùng hiển thị được chia theo chiều ngang: video chiếm 70%, cột preview chiếm 30%; cột preview chia đều theo chiều dọc cho ảnh biển số và ảnh xe ước lượng.
 - Video được phóng vừa vùng 70% và cắt phần thừa quanh tâm để lấp đầy vùng hiển thị, không kéo méo tỉ lệ.
+- Khung hình dùng cho YOLO/OCR được crop quanh tâm theo đúng tỉ lệ vùng video đang hiển thị; model không xử lý các phần nằm ngoài vùng nhìn thấy.
 - Người dùng chủ động chụp khung hình để nhận diện; hệ thống không tự động nhận diện mọi khung hình.
 - Sau khi YOLO phát hiện vùng biển số trong lần ghi nhận, hai ảnh crop hiển thị ở cột preview; nội dung được xóa khi bắt đầu lượt ghi nhận tiếp theo.
+- Biển số OCR được hiển thị bằng chữ lớn, cập nhật ngay khi nhận diện xong và độc lập với việc ghi nhật ký Excel.
 - Ảnh xe chỉ là vùng ước lượng quanh biển số dựa trên bounding box biển số, không phải vùng xe được một model riêng phát hiện và có thể không chứa toàn bộ xe.
 - Mỗi lượt nhận diện được xử lý nền, không cho chạy hai lần ghi nhận đồng thời trên cùng bảng khi worker trước còn hoạt động.
 - Kết quả nêu biển số, lối, loại đối tượng, mã/tên nhân viên nếu có và thời gian nhận diện.

@@ -5,6 +5,26 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 
+def crop_frame_to_aspect(frame, width, height):
+    if frame is None or frame.size == 0:
+        raise ValueError("Không có khung hình hợp lệ để cắt.")
+    if width <= 0 or height <= 0:
+        raise ValueError("Kích thước vùng hiển thị không hợp lệ.")
+
+    frame_height, frame_width = frame.shape[:2]
+    target_aspect = width / height
+    frame_aspect = frame_width / frame_height
+
+    if frame_aspect > target_aspect:
+        crop_width = max(1, round(frame_height * target_aspect))
+        left = (frame_width - crop_width) // 2
+        return frame[:, left:left + crop_width].copy()
+
+    crop_height = max(1, round(frame_width / target_aspect))
+    top = (frame_height - crop_height) // 2
+    return frame[top:top + crop_height, :].copy()
+
+
 class CameraThread(QThread):
     khung_hinh_moi = Signal(QImage)
     loi_nguon = Signal(str)

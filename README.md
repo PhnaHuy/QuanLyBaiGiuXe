@@ -24,7 +24,7 @@ Hai tệp Excel mẫu sẽ được tạo tự động khi khởi động lần 
 
 ## Sử dụng
 
-- **Điều hành:** nhập chỉ số webcam (ví dụ `0`, `1`) hoặc chọn tệp video, bấm **Mở nguồn**, sau đó bấm nút ghi nhận tương ứng. Nhận diện và ghi Excel chạy ở luồng nền. Mỗi lối chia vùng hiển thị theo tỉ lệ 70/30: video chiếm 70%, cột bên phải hiển thị ảnh biển số và vùng xe ước lượng. Video được cắt giữa để lấp đầy vùng hiển thị; vùng xe được ước lượng bằng cách mở rộng bounding box biển số, không phải kết quả từ model phát hiện xe riêng.
+- **Điều hành:** nhập chỉ số webcam (ví dụ `0`, `1`) hoặc chọn tệp video, bấm **Mở nguồn**, sau đó bấm nút ghi nhận tương ứng. Nhận diện và ghi Excel chạy ở luồng nền. Mỗi lối chia vùng hiển thị theo tỉ lệ 70/30: video chiếm 70%, cột bên phải hiển thị ảnh biển số và vùng xe ước lượng. Video được crop giữa để lấp đầy vùng hiển thị; khi ghi nhận, YOLO/OCR chỉ xử lý vùng crop cùng tỉ lệ với phần video đang thấy. Kết quả OCR được hiển thị lớn bên dưới video. Vùng xe được ước lượng bằng cách mở rộng bounding box biển số, không phải kết quả từ model phát hiện xe riêng.
 - **Đối chiếu lượt xe:** các lượt vào lỗi OCR và mọi lượt ra được giữ ở trạng thái chờ xác minh/đối chiếu. Chọn lượt cần xử lý, xem ảnh toàn cảnh, biển số, xe và chọn lượt vào đang mở; nhập/sửa biển số nếu cần rồi xác nhận. Khi đối chiếu lượt ra, biển số đã xác nhận được cập nhật cho cả lượt vào và lượt ra.
 - **Quản lý lịch sử:** xem nhật ký không thể chỉnh sửa trực tiếp, làm mới hoặc xuất báo cáo Excel/CSV. Nhật ký có trạng thái và đường dẫn ảnh bằng chứng.
 - **Quản lý nhân sự:** chọn một dòng để sửa hoặc xóa; dùng biểu mẫu để thêm thông tin nhân viên.
